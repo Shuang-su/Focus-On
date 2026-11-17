@@ -1,11 +1,11 @@
 import { constants } from 'node:fs';
-import { readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { readdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertCaptureAuthorized } from './authorization.js';
 import type { CaptureRequest, ChangeSet, ProcessingReceipt, RecordData } from './contracts.js';
 import { focusStates, type FocusState } from './focus-state.js';
 import {
-  assertLocalGitVault, branchExists, checkoutBranch, checkoutMain, commitPaths, ensureIssue, ensurePull,
+  assertLocalGitVault, assertWorktreeReady, branchExists, checkoutBranch, checkoutMain, commitPaths, ensureIssue, ensurePull,
   git, head, loadLedger, markPullMerged, mergeBranch, returnToMain, saveLedger, updateIssue,
   type CaptureIssue, type CaptureLedger, type CaptureLedgerEntry, type CapturePull,
 } from './local-vault.js';
@@ -19,6 +19,7 @@ export interface CaptureHooks {
   afterBranchCommit?: () => Promise<void> | void;
   beforeMerge?: () => Promise<void> | void;
   beforeReceipt?: () => Promise<void> | void;
+  beforeReceiptCommit?: () => Promise<void> | void;
 }
 export interface CaptureInput {
   request: unknown;
@@ -107,7 +108,11 @@ function contentFiles(request: CaptureRequest, content: ReadonlyMap<string, Uint
   for (const operation of request.operations) {
     const record = operation.record;
     if ('bodyPath' in record && record.bodyPath && content.has(record.bodyPath)) files.push({ path: record.bodyPath, bytes: Buffer.from(content.get(record.bodyPath)!) });
-    if (record.kind === 'attachment' && record.path && content.has(record.path)) files.push({ path: record.path, bytes: Buffer.from(content.get(record.path)!) });
+    if (record.kind === 'attachment' && record.archiveStatus === 'saved' && record.storage === 'local' && record.path?.startsWith('attachments/') && record.sha256 && record.size !== undefined && content.has(record.path)) {
+      const bytes = Buffer.from(content.get(record.path)!);
+      if (bytes.byteLength !== record.size || digest(bytes) !== record.sha256) throw new Error('attachment hash/size mismatch');
+      files.push({ path: record.path, bytes });
+    }
   }
   return files;
 }
@@ -147,21 +152,31 @@ async function markNeedsInput(root: string, requestKey: string): Promise<void> {
   const entry = ledger.entries[requestKey];
   if (entry) { entry.phase = 'needs_input'; await saveLedger(root, ledger); }
 }
-async function writeStoredReceipt(root: string, request: CaptureRequest, changeSet: ChangeSet, issue: CaptureIssue, pull: CapturePull, mergeCommit: string, snapshot: string): Promise<ProcessingReceipt> {
+async function restoreReceipt(root: string, relative: string, previous: Buffer | undefined): Promise<void> {
+  try { git(root, ['reset', '-q', 'HEAD', '--', relative]); } catch { /* the receipt was not staged */ }
+  if (previous) await writeFile(path.join(root, relative), previous, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode: 0o644 });
+  else await unlink(path.join(root, relative)).catch(() => undefined);
+}
+async function writeStoredReceipt(root: string, request: CaptureRequest, changeSet: ChangeSet, issue: CaptureIssue, pull: CapturePull, mergeCommit: string, snapshot: string, beforeCommit?: () => Promise<void> | void): Promise<ProcessingReceipt> {
+  const relative = receiptPath(request);
+  const previous = await readOptionalFile(root, relative);
   const existing = await readReceipt(root, request);
-  if (existing?.status === 'stored') {
-    if (existing.inputHash !== changeSet.inputHash || existing.evidence?.commit !== mergeCommit || !existing.verification.verified) throw new Error('Conflict: stored receipt does not match this request');
-    return existing;
-  }
-  const receipt: ProcessingReceipt = {
+  const matches = (receipt: ProcessingReceipt) => receipt.status === 'stored' && receipt.inputHash === changeSet.inputHash && receipt.evidence?.commit === mergeCommit && receipt.verification.verified;
+  if (existing?.status === 'stored' && !matches(existing)) throw new Error('Conflict: stored receipt does not match this request');
+  const receipt: ProcessingReceipt = existing && matches(existing) ? existing : {
     schemaVersion: 1, requestId: request.requestId, inputVersion: request.inputVersion, inputHash: changeSet.inputHash,
     status: 'stored', recordIds: changeSet.changes.map(change => change.record.id),
     verification: { verified: true, snapshot }, evidence: { issueUrl: issue.url, prUrl: pull.url, commit: mergeCommit },
   };
   if (!validateReceipt(receipt)) throw new Error('Refusing to write an invalid receipt');
-  const relative = receiptPath(request);
-  await writeFile(await prepareWrite(root, relative), jsonBytes(receipt), { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode: 0o644 });
-  commitPaths(root, [relative], `receipt ${request.requestId} v${request.inputVersion}`);
+  try {
+    if (!existing || !matches(existing)) await writeFile(await prepareWrite(root, relative), jsonBytes(receipt), { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode: 0o644 });
+    if (beforeCommit) await beforeCommit();
+    commitPaths(root, [relative], `receipt ${request.requestId} v${request.inputVersion}`);
+  } catch (error) {
+    await restoreReceipt(root, relative, previous);
+    throw error;
+  }
   return receipt;
 }
 async function completeStored(root: string, request: CaptureRequest, content: ReadonlyMap<string, Uint8Array>, inputHash: string, requestKey: string): Promise<CaptureResult> {
@@ -192,10 +207,12 @@ export async function captureChanges(input: CaptureInput): Promise<CaptureResult
   const content = input.content ?? new Map<string, Uint8Array>();
   assertContentLimits(content);
   const root = await assertLocalGitVault(input.vault);
+  const requestKey = requestKeyOf(request);
+  const pendingReceipt = (await loadLedger(root)).entries[requestKey];
+  assertWorktreeReady(root, pendingReceipt?.phase === 'merged' || pendingReceipt?.phase === 'stored' ? receiptPath(request) : undefined);
   const vault = await readVault(root);
   if (vault.errors.length) throw new Error('Invalid vault: ' + vault.errors.join('; '));
   const inputHash = digest(canonical(request));
-  const requestKey = requestKeyOf(request);
   const branch = `capture/${request.requestId}/v${request.inputVersion}`;
   if (!branchPattern.test(branch)) throw new Error('Unsafe capture branch');
   const saved = vault.requests.get(requestKey);
@@ -268,7 +285,7 @@ export async function captureChanges(input: CaptureInput): Promise<CaptureResult
   let receipt: ProcessingReceipt;
   try {
     if (input.hooks?.beforeReceipt) await input.hooks.beforeReceipt();
-    receipt = await writeStoredReceipt(root, request, planned.changeSet, issue, { ...pull, state: 'merged', mergeCommit }, mergeCommit, snapshot);
+    receipt = await writeStoredReceipt(root, request, planned.changeSet, issue, { ...pull, state: 'merged', mergeCommit }, mergeCommit, snapshot, input.hooks?.beforeReceiptCommit);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Conflict:')) throw error;
     throw new Error('Receipt write-back failed; retry the same request to recover without a new record');

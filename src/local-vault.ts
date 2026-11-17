@@ -78,8 +78,22 @@ export async function assertLocalGitVault(input: string): Promise<string> {
   if (/focus-on-vault/i.test(remotes) || /github\.com/i.test(remotes)) throw new Error('Live writes to the private vault are not enabled');
   const config = git(cwd, ['config', '--local', '--list']);
   if (/^(alias\.|remote\.)/m.test(config)) throw new Error('Live writes to the private vault are not enabled');
-  if (git(cwd, ['status', '--porcelain'])) throw new Error('Vault worktree must be clean before capture');
   return cwd;
+}
+export function dirtyPaths(cwd: string): string[] {
+  const porcelain = git(cwd, ['status', '--porcelain', '-uall']);
+  if (!porcelain) return [];
+  return porcelain.split('\n').filter(Boolean).map(line => {
+    const body = line.slice(3).trim();
+    const renamed = body.split(' -> ').pop();
+    return renamed ?? body;
+  });
+}
+export function assertWorktreeReady(cwd: string, pendingReceipt?: string): void {
+  const paths = dirtyPaths(cwd);
+  if (!paths.length) return;
+  if (pendingReceipt && paths.length === 1 && paths[0] === pendingReceipt) return;
+  throw new Error('Vault worktree must be clean before capture');
 }
 
 export function head(cwd: string): string { return git(cwd, ['rev-parse', 'HEAD']); }

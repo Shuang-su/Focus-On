@@ -45,7 +45,7 @@ try {
     }
     json(result);
   } else if (command === 'capture') {
-    const vault = arg('--vault') ?? process.env.FOCUS_VAULT_PATH;
+    const vault = arg('--vault');
     const input = arg('--request'); if (!vault || !input) throw new Error('--vault and --request are required');
     const output = arg('--out');
     const destination = output ? await outputDirectory(root, output) : undefined;
@@ -64,7 +64,7 @@ try {
     }
     json(result);
   } else if (command === 'confirm-finance') {
-    const vault = arg('--vault') ?? process.env.FOCUS_VAULT_PATH;
+    const vault = arg('--vault');
     const input = arg('--request'); if (!vault || !input) throw new Error('--vault and --request are required');
     JSON.parse(await readFile(input, 'utf8'));
     await readVault(vault);

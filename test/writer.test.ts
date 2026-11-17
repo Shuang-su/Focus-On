@@ -299,6 +299,62 @@ test('body and attachment bytes round-trip and unsafe content is rejected', asyn
   await assert.rejects(planChanges(plain, example), /future attachment writer/);
 });
 
+test('capture requires --vault even when FOCUS_VAULT_PATH is set', async () => {
+  const root = await gitVault('env-vault');
+  const head = gitExec(root, ['rev-parse', 'HEAD']);
+  const cli = spawnSync(process.execPath, [path.resolve('.codex-work/build/src/cli.js'), 'capture', '--request', 'examples/requests/create-task.json', '--authorize', 'capture'], {
+    encoding: 'utf8', env: { ...process.env, FOCUS_VAULT_PATH: root },
+  });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stdout, /--vault and --request are required/);
+  assert.equal(gitExec(root, ['rev-parse', 'HEAD']), head);
+  assert.equal(gitExec(root, ['status', '--porcelain']), '');
+});
+
+test('reference-only attachment content cannot overwrite another record', async () => {
+  const root = await gitVault('reference');
+  const taskPath = path.join(root, 'life/tasks/task_sample.json');
+  const before = await readFile(taskPath);
+  const request = await createRequest(root, 'request_ref', {
+    kind: 'attachment', title: '仅引用', storage: 'remote_reference', archiveStatus: 'reference_only',
+    path: 'life/tasks/task_sample.json', url: 'https://example.invalid/reference',
+  });
+  const result = await captureChanges({
+    request, vault: root, grants,
+    content: new Map([['life/tasks/task_sample.json', Buffer.from(before.toString('utf8').replace('合成对账待办', '被覆盖'))]]),
+  });
+  assert.equal(result.receipt.status, 'stored');
+  assert.equal(result.changeSet.changes.length, 1);
+  assert.equal(result.changeSet.changes[0]!.record.kind, 'attachment');
+  assert.equal(await readFile(taskPath, 'utf8'), before.toString('utf8'));
+  assert.equal((await readVault(root)).records.get('task_sample')!.record.title, '合成对账待办');
+});
+
+test('a failed receipt commit is rolled back and an uncommitted receipt can be recovered', async () => {
+  const root = await gitVault('receipt-rollback');
+  const request = await taskRequest(root);
+  await assert.rejects(captureChanges({
+    request, vault: root, grants, hooks: { beforeReceiptCommit() { throw new Error('commit failed'); } },
+  }), /write-back/);
+  assert.equal(gitExec(root, ['status', '--porcelain']), '');
+  await assert.rejects(readFile(path.join(root, 'inbox/receipts/request_demo-v1.json')), { code: 'ENOENT' });
+  const ledger = await readCaptureLedger(root);
+  const entry = ledger.entries['request_demo/v1']!;
+  const planted = {
+    schemaVersion: 1, requestId: request.requestId, inputVersion: request.inputVersion, inputHash: entry.inputHash, status: 'stored',
+    recordIds: entry.changeSet.changes.map(change => change.record.id),
+    verification: { verified: true, snapshot: (await readVault(root)).snapshot },
+    evidence: { issueUrl: ledger.issues[0]!.url, prUrl: ledger.pulls[0]!.url, commit: entry.mergeCommit },
+  };
+  await mkdir(path.join(root, 'inbox/receipts'), { recursive: true });
+  await writeFile(path.join(root, 'inbox/receipts/request_demo-v1.json'), JSON.stringify(planted, null, 2) + '\n');
+  const result = await captureChanges({ request, vault: root, grants });
+  assert.equal(result.receipt.status, 'stored');
+  assert.equal(result.receipt.evidence?.commit, entry.mergeCommit);
+  assert.equal(gitExec(root, ['status', '--porcelain']), '');
+  assert.equal((await readVault(root)).records.size, 13);
+});
+
 test('live private-vault remotes and git pushes are refused', async () => {
   const root = await gitVault('remote');
   const head = gitExec(root, ['rev-parse', 'HEAD']);

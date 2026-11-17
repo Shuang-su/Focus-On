@@ -5,8 +5,8 @@
 ## 命令
 
 - `focus plan`：只读计划，回执为 planned / verified=false。
-- `focus capture --request FILE --vault PATH --authorize capture [--content DIR] [--out DIR] [--previous FILE]`：本地写入入口。
-- `focus confirm-finance --request FILE --vault PATH --authorize finance-confirm`：承认单独授权，但不写 confirmed。
+- `focus capture --request FILE --vault PATH --authorize capture [--content DIR] [--out DIR] [--previous FILE]`：本地写入入口。`--vault` 必须出现在命令行，不沿用 `FOCUS_VAULT_PATH`。
+- `focus confirm-finance --request FILE --vault PATH --authorize finance-confirm`：承认单独授权，但不写 confirmed。同样必须显式传入 `--vault`。
 - 既有 `doctor`、`validate`、`schemas` 保留。
 
 ## 授权与闭环
@@ -26,7 +26,7 @@ bash scripts/bootstrap.sh check
 bash scripts/bootstrap.sh focus validate --vault examples/vault
 ```
 
-`check` 包含构建、30 项测试和示例资料库校验。测试使用 `examples/vault` 的临时 git 副本。Git 推送和指向 `focus-on-vault` 的远端在执行前被拒绝。
+`check` 包含构建、33 项测试和示例资料库校验。测试使用 `examples/vault` 的临时 git 副本。Git 推送和指向 `focus-on-vault` 的远端在执行前被拒绝。
 
 ## 留到后续 live 启用
 

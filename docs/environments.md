@@ -17,7 +17,7 @@ bash scripts/bootstrap.sh focus plan --request examples/requests/create-task.jso
 
 返回 change-set.json、receipt.json、测试摘要和所运行 commit SHA。本机重算并比较 requestId、inputHash、baseSnapshot、branch、afterHash。不要把容器里的绝对路径作为数据契约。
 
-云端交接保持 plan。`capture` 只在显式 `--vault` 指向本地 git 资料库、并且传入 `--authorize capture` 时写文件。它不推送远端，遇到 `github.com` 或 `focus-on-vault` 远端会拒绝。私有仓库的 live 写入留到后续单独启用；测试使用 `examples/vault` 的临时副本或 mock，不访问私有远端。
+云端交接保持 plan。`capture` 和 `confirm-finance` 只接受命令行 `--vault`，不读取 `FOCUS_VAULT_PATH`。`capture` 还要传入 `--authorize capture` 才写本地 git 资料库。它不推送远端，遇到 `github.com` 或 `focus-on-vault` 远端会拒绝。私有仓库的 live 写入留到后续单独启用；测试使用 `examples/vault` 的临时副本或 mock，不访问私有远端。
 
 GitHub Actions 的 Linux 验证与 Codex/Dots 实测分别记录。后者需要真实任务链接与取回内容；授权或云入口尚未就绪时标待验收。
 
