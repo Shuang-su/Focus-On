@@ -49,7 +49,7 @@ bash scripts/bootstrap.sh focus restore --backup .codex-work/tmp/backup --vault 
 
 地点、地图和参考包同样只读调用方传入的 `--vault`，不读取 `FOCUS_VAULT_PATH`。`match-place` 用资料库里已有坐标的地点，以及调用方给出的离线候选目录，提出候选。默认目录 `examples/context/place-candidates.json` 是合成占位坐标，不是实测地点。匹配结果里的 `confirmed` 固定为 false，命令不会访问网络地理编码。
 
-`confirm-place` 把其中一个候选写成地点记录上的 `locationStatus: confirmed` 和坐标。没有 `--authorize place-confirm` 时它拒绝执行，资料库保持不变。`--authorize capture` 不能代替这个授权。`capture` 即使同时带上 `--authorize place-confirm`，也不能把地点直接写成 confirmed；确认只走 `confirm-place`，并且只复制当次匹配到的候选。写入复用本地 git 录入闭环，拒绝 `github.com` 和 `focus-on-vault` 远端，不推送，也不把财务草稿改成 confirmed。
+`confirm-place` 把其中一个候选写成地点记录上的 `locationStatus: confirmed` 和坐标。没有 `--authorize place-confirm` 时它拒绝执行，资料库保持不变。`--authorize capture` 不能代替这个授权。`capture` 即使同时带上 `--authorize place-confirm`，也不能把地点直接写成 confirmed；确认只走 `confirm-place`，并且只复制当次匹配到的候选。地点已经是这个候选时，再次执行不会改写记录。之后如果确认了另一个候选，可以再确认原来的候选，这次会按当前记录新写一版并保留当前标题。写入复用本地 git 录入闭环，拒绝 `github.com` 和 `focus-on-vault` 远端，不推送，也不把财务草稿改成 confirmed。
 
 ```bash
 bash scripts/bootstrap.sh focus places --vault examples/vault

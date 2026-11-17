@@ -138,11 +138,12 @@ try {
       vault, placeId: explicit('--place'), candidateId: explicit('--candidate'), grants: repeated('--authorize'),
       query: arg('--query'), candidatesFile: arg('--candidates') ?? defaultCandidates,
     });
-    await emitFiles(vault, output, [
+    const files: Array<[string, string]> = [['place-match.json', jsonText(result.match)]];
+    if (!('unchanged' in result)) files.push(
       ['change-set.json', jsonText(result.changeSet)], ['receipt.json', jsonText(result.receipt)],
       ['issue.json', jsonText({ number: result.issue.number, url: result.issue.url, focusState: result.issue.focusState, linear: result.issue.linear })],
-      ['place-match.json', jsonText(result.match)],
-    ]);
+    );
+    await emitFiles(vault, output, files);
     json(result);
   } else if (command === 'map') {
     const vault = explicit('--vault');

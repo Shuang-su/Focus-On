@@ -30,7 +30,7 @@ ChangeSet 包含相对数据路径、beforeHash/afterHash 和候选记录。Proc
 
 `placeList` 列出 entityType 为 place 的记录。没有 `locationStatus` 时视图写 `unset`，不会把它显示成 confirmed。`placeMatch` 的 `confirmed` 固定为 false，`proposalsOnly` 固定为 true，`geocoder` 固定为 disabled。候选来自两类本地数据：资料库中其他已经有坐标的地点，以及一份离线候选目录。目录里的名称只做文本包含和分词相等，查询字符串也只作为文本。默认目录是合成占位坐标，evidence 写明它不是实测地点。匹配最多返回 100 条，按分数和 id 排序。已确认的资料库地点比同名合成候选分数更高。没有坐标的地点不会被拿来当候选，也不会在地图上得到假点。
 
-`confirm-place` 只接受这次匹配结果中的一个候选 id。它生成一条更新该地点的 CaptureRequest，把 `locationStatus` 写成 confirmed，并把候选坐标抄进 `coordinates`。evidence 带上候选 id 和来源。请求 id 由 vaultId、地点 id、候选 id 和确认后的坐标决定，因此同一次确认可以重试；重试读取已保存的请求，不把 revision 再加一次。授权标志是 `--authorize place-confirm`。`capture` 发现操作会把地点新写成 confirmed，或改掉已确认坐标时，直接拒绝，即使调用方同时给了 `--authorize place-confirm`。财务草稿仍不能写成 confirmed。
+`confirm-place` 只接受这次匹配结果中的一个候选 id。它生成一条更新该地点的 CaptureRequest，把 `locationStatus` 写成 confirmed，并把候选坐标抄进 `coordinates`。evidence 带上候选 id 和来源。请求 id 由 vaultId、地点、候选、确认坐标，以及当前记录哈希和 snapshot 共同决定。尚未写完的同一次确认会复用已保存请求。地点已经带着这个候选的坐标时，命令不再写入，也不会用旧请求覆盖后来改过的标题或其他字段。中间换成了别的候选之后，再确认原来的候选会按当前记录生成新的请求。授权标志是 `--authorize place-confirm`。`capture` 发现操作会把地点新写成 confirmed，或改掉已确认坐标时，直接拒绝，即使调用方同时给了 `--authorize place-confirm`。财务草稿仍不能写成 confirmed。
 
 `collectionMap` 是静态视图，附带一份 GeoJSON FeatureCollection。点的坐标顺序是 `[longitude, latitude]`。`system` 原样保留 WGS84 或 GCJ02，不做换算。收藏会挂到地点上的条件是：地点或收藏的 links 直接指向对方，或另一条记录同时连着这个地点和这条收藏。没有坐标的地点，以及没有挂到任何有坐标地点上的收藏，分别进入 `unplacedPlaces` 和 `unplacedCollections`。
 

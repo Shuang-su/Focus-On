@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { buildCollectionMap, buildReferencePack, confirmPlace, listPlaces, matchPlace } from '../src/context.js';
+import { buildCollectionMap, buildReferencePack, confirmPlace, listPlaces, matchPlace, type PlaceConfirmation } from '../src/context.js';
 import type { CaptureRequest, RecordData } from '../src/contracts.js';
 import { git } from '../src/local-vault.js';
 import { acceptVault, buildQueryIndex, indexDigest } from '../src/query.js';
@@ -50,6 +50,10 @@ function placeRecord(id: string, title: string, coordinates?: Record<string, unk
     source: { kind: 'synthetic', reference: 'context-fixture' }, links: [], id, kind: 'entity', title, entityType: 'place',
     ...(locationStatus ? { locationStatus } : {}), ...(coordinates ? { coordinates } : {}),
   };
+}
+function storedConfirmation(result: PlaceConfirmation): Exclude<PlaceConfirmation, { unchanged: true }> {
+  if ('unchanged' in result) throw new Error('expected a stored place confirmation');
+  return result;
 }
 async function directConfirmation(vault: string): Promise<CaptureRequest> {
   const snapshot = await readVault(vault);
@@ -132,7 +136,7 @@ test('place confirmation is authorized, local, and limited to a matched candidat
   globalThis.fetch = (async () => { throw new Error('network geocoder was called'); }) as typeof fetch;
   let confirmed;
   try {
-    confirmed = await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates });
+    confirmed = storedConfirmation(await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates }));
   } finally { globalThis.fetch = previous; }
   assert.equal(confirmed.receipt.status, 'stored');
   assert.equal(confirmed.receipt.verification.verified, true);
@@ -151,7 +155,7 @@ test('place confirmation is authorized, local, and limited to a matched candidat
   assert.equal(((await readVault(root)).records.get('finance_sample')!.record as { status: string }).status, 'pending');
   const commit = gitExec(root, ['rev-parse', 'HEAD']);
   const again = await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates });
-  assert.equal(again.receipt.evidence?.commit, confirmed.receipt.evidence?.commit);
+  assert.equal(storedConfirmation(again).receipt.evidence?.commit, storedConfirmation(confirmed).receipt.evidence?.commit);
   assert.equal(gitExec(root, ['rev-parse', 'HEAD']), commit);
   assert.equal(((await readVault(root)).records.get('place_sample')!.record as { revision: number }).revision, 2);
   const current = (await readVault(root)).records.get('place_sample')!.record;
@@ -169,6 +173,12 @@ test('place confirmation is authorized, local, and limited to a matched candidat
   assert.equal(kept.title, '合成地点：已确认');
   assert.equal(kept.locationStatus, 'confirmed');
   assert.equal(kept.coordinates?.latitude, 0);
+  const titledHead = gitExec(root, ['rev-parse', 'HEAD']);
+  const stillHall = await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates });
+  assert.equal('unchanged' in stillHall && stillHall.unchanged, true);
+  assert.equal(gitExec(root, ['rev-parse', 'HEAD']), titledHead);
+  assert.equal(((await readVault(root)).records.get('place_sample')!.record as { revision: number; title: string }).revision, 3);
+  assert.equal(((await readVault(root)).records.get('place_sample')!.record as { title: string }).title, '合成地点：已确认');
   const moved = JSON.parse(await readFile('examples/requests/create-task.json', 'utf8')) as CaptureRequest;
   moved.requestId = 'request_place_move';
   moved.baseSnapshot = (await readVault(root)).snapshot;
@@ -180,13 +190,26 @@ test('place confirmation is authorized, local, and limited to a matched candidat
   const beforeMove = gitExec(root, ['rev-parse', 'HEAD']);
   await assert.rejects(captureChanges({ request: moved, vault: root, grants: ['capture', 'place-confirm'] }), /only applied by confirm-place/);
   assert.equal(gitExec(root, ['rev-parse', 'HEAD']), beforeMove);
-  const relocated = await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_dining', grants: ['place-confirm'], candidatesFile: candidates });
+  const relocated = storedConfirmation(await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_dining', grants: ['place-confirm'], candidatesFile: candidates }));
   assert.equal(relocated.receipt.status, 'stored');
   const dining = (await readVault(root)).records.get('place_sample')!.record as { revision: number; title: string; coordinates?: { latitude: number; longitude: number } };
   assert.equal(dining.revision, 4);
   assert.equal(dining.title, '合成地点：已确认');
   assert.equal(dining.coordinates?.latitude, 0.5);
   assert.equal(dining.coordinates?.longitude, -0.5);
+  const restored = storedConfirmation(await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates }));
+  assert.equal(restored.receipt.status, 'stored');
+  assert.notEqual(restored.changeSet.requestId, storedConfirmation(confirmed).changeSet.requestId);
+  const back = (await readVault(root)).records.get('place_sample')!.record as { revision: number; title: string; coordinates?: { latitude: number; longitude: number } };
+  assert.equal(back.revision, 5);
+  assert.equal(back.title, '合成地点：已确认');
+  assert.equal(back.coordinates?.latitude, 0);
+  assert.equal(back.coordinates?.longitude, 0);
+  const restoredHead = gitExec(root, ['rev-parse', 'HEAD']);
+  const restoredAgain = storedConfirmation(await confirmPlace({ vault: root, placeId: 'place_sample', candidateId: 'fixture_synth_hall', grants: ['place-confirm'], candidatesFile: candidates }));
+  assert.equal(restoredAgain.receipt.evidence?.commit, restored.receipt.evidence?.commit);
+  assert.equal(gitExec(root, ['rev-parse', 'HEAD']), restoredHead);
+  assert.equal(((await readVault(root)).records.get('place_sample')!.record as { revision: number }).revision, 5);
   assert.equal((await readVault(root)).records.size, 12);
   assert.equal(((await readVault(root)).records.get('task_sample')!.record as { status: string }).status, 'todo');
   assert.equal(((await readVault(root)).records.get('finance_sample')!.record as { status: string }).status, 'pending');
@@ -227,7 +250,7 @@ test('vault candidates and recorded catalogs stay offline and drive the collecti
     }],
   }));
   const custom = await gitVault('custom');
-  const stored = await confirmPlace({ vault: custom, placeId: 'place_sample', candidateId: 'fixture_custom_hall', grants: ['place-confirm'], candidatesFile: catalog });
+  const stored = storedConfirmation(await confirmPlace({ vault: custom, placeId: 'place_sample', candidateId: 'fixture_custom_hall', grants: ['place-confirm'], candidatesFile: catalog }));
   assert.equal(stored.receipt.status, 'stored');
   const mapped = await buildCollectionMap(custom);
   assert.equal(mapped.features[0]!.system, 'GCJ02');

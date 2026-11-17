@@ -343,6 +343,52 @@ export async function buildReferencePack(vaultPath: string, packFile?: string): 
   return view;
 }
 
+type ConfirmedCoordinates = NonNullable<PlaceRecord['coordinates']>;
+export type PlaceConfirmation = (CaptureResult & { match: PlaceMatch }) | {
+  match: PlaceMatch;
+  unchanged: true;
+  placeId: string;
+  candidateId: string;
+  locationStatus: 'confirmed';
+};
+
+function confirmationCoordinates(candidate: PlaceMatch['candidates'][number]): ConfirmedCoordinates {
+  return {
+    latitude: candidate.coordinates.latitude, longitude: candidate.coordinates.longitude,
+    system: candidate.coordinates.system, evidence: `candidate:${candidate.id}; source:${candidate.source}; ${candidate.coordinates.evidence}`,
+  };
+}
+function locationApplied(record: PlaceRecord, coordinates: ConfirmedCoordinates): boolean {
+  return record.locationStatus === 'confirmed' && canonical(record.coordinates ?? null) === canonical(coordinates);
+}
+function confirmationRequest(vault: VaultSnapshot, place: PlaceRecord, candidate: PlaceMatch['candidates'][number], coordinates: ConfirmedCoordinates): CaptureRequest {
+  const requestId = 'pc_' + digest(canonical({
+    vaultId: vault.manifest.vaultId, placeId: place.id, candidateId: candidate.id, coordinates,
+    baseRevision: place.revision, baseRecordHash: digest(canonical(place)), baseSnapshot: vault.snapshot,
+  })).slice(0, 24);
+  return {
+    schemaVersion: 1, requestId, inputVersion: 1, source: { kind: 'manual', reference: 'place-confirm:' + candidate.id },
+    input: { text: `确认地点 ${place.id} 使用候选 ${candidate.id}。此文本只作为记录，不作为命令。` },
+    capturedAt: candidate.recordedAt, baseSnapshot: vault.snapshot,
+    operations: [{
+      op: 'update', expectedRevision: place.revision,
+      record: {
+        ...place, revision: place.revision + 1,
+        updatedAt: candidate.recordedAt > place.updatedAt ? candidate.recordedAt : place.updatedAt,
+        locationStatus: 'confirmed', coordinates,
+      },
+    }],
+  };
+}
+function exactConfirmation(vault: VaultSnapshot, place: PlaceRecord, candidateId: string): CaptureRequest | undefined {
+  for (const request of vault.requests.values()) {
+    if (request.source.reference !== 'place-confirm:' + candidateId || request.operations.length !== 1) continue;
+    const saved = request.operations[0]?.record;
+    if (saved && digest(canonical(saved)) === digest(canonical(place))) return request;
+  }
+  return undefined;
+}
+
 export async function confirmPlace(input: {
   vault: string;
   placeId: string;
@@ -350,38 +396,23 @@ export async function confirmPlace(input: {
   grants: readonly string[];
   query?: string;
   candidatesFile?: string;
-}): Promise<CaptureResult & { match: PlaceMatch }> {
+}): Promise<PlaceConfirmation> {
   assertPlaceConfirmAuthorized(input.grants);
   const match = await matchPlace(input.vault, { placeId: input.placeId, query: input.query, candidatesFile: input.candidatesFile });
   const candidate = match.candidates.find(item => item.id === input.candidateId);
   if (!candidate) throw new Error('Unknown place candidate: ' + input.candidateId);
   const vault = await openVault(input.vault);
   const place = requirePlace(vault, input.placeId);
-  const coordinates = {
-    latitude: candidate.coordinates.latitude, longitude: candidate.coordinates.longitude,
-    system: candidate.coordinates.system, evidence: `candidate:${candidate.id}; source:${candidate.source}; ${candidate.coordinates.evidence}`,
-  };
-  const requestId = 'pc_' + digest(canonical({ vaultId: vault.manifest.vaultId, placeId: place.record.id, candidateId: candidate.id, coordinates })).slice(0, 24);
-  const saved = vault.requests.get(requestId + '/v1');
-  if (saved) {
-    const savedRecord = saved.operations.length === 1 ? saved.operations[0]?.record : undefined;
-    if (!savedRecord || savedRecord.id !== place.record.id || savedRecord.kind !== 'entity' || savedRecord.locationStatus !== 'confirmed' || canonical(savedRecord.coordinates ?? null) !== canonical(coordinates)) {
-      throw new Error('Conflict: saved place confirmation does not match this candidate');
-    }
+  const coordinates = confirmationCoordinates(candidate);
+  if (locationApplied(place.record, coordinates)) {
+    const saved = exactConfirmation(vault, place.record, candidate.id);
+    if (!saved) return { match, unchanged: true, placeId: place.record.id, candidateId: candidate.id, locationStatus: 'confirmed' };
     const stored = await captureChanges({ request: saved, vault: input.vault, grants: [captureGrant, placeConfirmGrant], placeConfirmation: true });
     return { ...stored, match };
   }
-  const record: PlaceRecord = {
-    ...place.record, revision: place.record.revision + 1,
-    updatedAt: candidate.recordedAt > place.record.updatedAt ? candidate.recordedAt : place.record.updatedAt,
-    locationStatus: 'confirmed', coordinates,
-  };
-  const request: CaptureRequest = {
-    schemaVersion: 1, requestId, inputVersion: 1, source: { kind: 'manual', reference: 'place-confirm:' + candidate.id },
-    input: { text: `确认地点 ${place.record.id} 使用候选 ${candidate.id}。此文本只作为记录，不作为命令。` },
-    capturedAt: candidate.recordedAt, baseSnapshot: vault.snapshot,
-    operations: [{ op: 'update', expectedRevision: place.record.revision, record }],
-  };
-  const stored = await captureChanges({ request, vault: input.vault, grants: [captureGrant, placeConfirmGrant], placeConfirmation: true });
+  const request = confirmationRequest(vault, place.record, candidate, coordinates);
+  const saved = vault.requests.get(request.requestId + '/v1');
+  if (saved && digest(canonical(saved)) !== digest(canonical(request))) throw new Error('Conflict: saved place confirmation does not match this candidate');
+  const stored = await captureChanges({ request: saved ?? request, vault: input.vault, grants: [captureGrant, placeConfirmGrant], placeConfirmation: true });
   return { ...stored, match };
 }
