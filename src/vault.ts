@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, type RecordData, type VaultManifest, type CaptureRequest } from './contracts.js';
+import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, type RecordData, type VaultManifest, type CaptureRequest, type ProcessingReceipt } from './contracts.js';
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 (addFormats as unknown as (instance: Ajv2020) => void)(ajv);
@@ -12,6 +12,8 @@ export const validateManifest = ajv.compile(manifestSchema);
 export const validateRequest = ajv.compile(captureRequestSchema);
 export const validateChangeSet = ajv.compile(changeSetSchema);
 export const validateReceipt = ajv.compile(processingReceiptSchema);
+export const validateQueryIndex = ajv.compile(queryIndexSchema);
+export const validateBackupManifest = ajv.compile(backupManifestSchema);
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}';
@@ -19,7 +21,7 @@ export function canonical(value: unknown): string {
 }
 export const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 const domains = ['collections', 'notes', 'life', 'finance', 'entities', 'attachments-manifest'];
-export interface VaultSnapshot { root: string; manifest: VaultManifest; records: Map<string, { path: string; record: RecordData }>; requests: Map<string, CaptureRequest>; snapshot: string; errors: string[] }
+export interface VaultSnapshot { root: string; manifest: VaultManifest; records: Map<string, { path: string; record: RecordData }>; requests: Map<string, CaptureRequest>; receipts: Map<string, ProcessingReceipt>; snapshot: string; errors: string[] }
 export function assertSafeRelative(relative: string): void {
   if (!relative || path.isAbsolute(relative) || relative.includes('\\') || relative.split('/').some(part => part === '..' || part === '.' || part === '' || part.startsWith('.'))) throw new Error('Unsafe relative data path');
 }
@@ -89,11 +91,22 @@ export async function readVault(input: string): Promise<VaultSnapshot> {
       }
     } catch { errors.push(file + ': invalid request JSON'); }
   }
+  const receipts: VaultSnapshot['receipts'] = new Map();
   for (const file of await files(root, 'inbox/receipts')) {
     try {
-      const receipt = JSON.parse(await readFile(await safeFile(root, file), 'utf8'));
+      const receipt = JSON.parse(await readFile(await safeFile(root, file), 'utf8')) as ProcessingReceipt;
       if (!validateReceipt(receipt)) errors.push(file + ': invalid ProcessingReceipt');
+      else {
+        const version = receipt.requestId + '/v' + receipt.inputVersion;
+        if (receipts.has(version)) errors.push(file + ': duplicate receipt version ' + version);
+        else receipts.set(version, receipt);
+      }
     } catch { errors.push(file + ': invalid receipt JSON'); }
+  }
+  for (const [version, receipt] of receipts) {
+    const request = requests.get(version);
+    if (!request) errors.push(version + ': inbox receipt has no saved request');
+    else if (digest(canonical(request)) !== receipt.inputHash) errors.push(version + ': inbox receipt hash mismatch');
   }
   for (const domain of domains) {
     for (const file of await files(root, domain)) {
@@ -138,5 +151,5 @@ export async function readVault(input: string): Promise<VaultSnapshot> {
       }
     }
   }
-  return { root, manifest, records, requests, snapshot: digest(canonical(hashes.sort(([a], [b]) => a.localeCompare(b, 'en')))), errors };
+  return { root, manifest, records, requests, receipts, snapshot: digest(canonical(hashes.sort(([a], [b]) => a.localeCompare(b, 'en')))), errors };
 }

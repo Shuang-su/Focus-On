@@ -38,3 +38,5 @@ GitHub 原生集成允许多个仓库向同一 Team 单向同步，但每个 Tea
 | 请求中止 | 已取消 | 保留名称；writer 不自动取消生活事项 |
 
 准备材料里的 PR 打开、审阅、合并映射仍是未启用的 Linear 工作流。writer 只有在 main 读回成功后才把本地状态写成已入库。关闭录入 Issue 不修改待办、预购或财务业务状态。
+
+日常查询不改变这张表。`inbox`、`search`、`life`、`index` 和 `accept` 只读 vault 文件，不回写 FOCUS 状态，也不调用 Linear。录入回执里的 stored 和生活事项里的 done 仍然是两套状态。

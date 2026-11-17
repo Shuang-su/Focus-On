@@ -84,3 +84,71 @@ export const processingReceiptSchema = {
 } as const;
 export type ChangeSet = FromSchema<typeof changeSetSchema>;
 export type ProcessingReceipt = FromSchema<typeof processingReceiptSchema>;
+
+const queryRecordSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['id', 'kind', 'path', 'title', 'revision', 'updatedAt', 'recordHash', 'text', 'source'],
+  properties: {
+    id: recordId,
+    kind: { enum: ['collection', 'note', 'task', 'plan', 'wishlist', 'finance_draft', 'entity', 'budget', 'subscription', 'attachment'] },
+    path: { type: 'string', minLength: 1, maxLength: 500 },
+    title: { type: 'string', minLength: 1, maxLength: 500 },
+    revision: { type: 'integer', minimum: 1 },
+    updatedAt: { type: 'string', format: 'date-time' },
+    recordHash: hash,
+    text: { type: 'string', maxLength: 5 * 1024 * 1024 },
+    source: common.source,
+    status: { type: 'string', minLength: 1, maxLength: 100 },
+    archiveStatus: { type: 'string', minLength: 1, maxLength: 100 },
+    tags: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+    url: { type: 'string', format: 'uri' },
+  },
+} as const;
+const inboxIndexSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['requestId', 'inputVersion', 'inputHash', 'capturedAt', 'status', 'recordIds'],
+  properties: {
+    requestId: recordId,
+    inputVersion: { type: 'integer', minimum: 1 },
+    inputHash: hash,
+    capturedAt: { type: 'string', format: 'date-time' },
+    status: { enum: ['planned', 'awaiting_merge', 'stored', 'needs_input', 'failed', 'saved'] },
+    recordIds: { type: 'array', uniqueItems: true, items: recordId },
+    receiptHash: hash,
+  },
+} as const;
+export const queryIndexSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/query-index-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'vaultId', 'sourceSnapshot', 'records', 'inbox'],
+  properties: {
+    schemaVersion: { const: 1 },
+    vaultId: recordId,
+    sourceSnapshot: hash,
+    records: { type: 'array', items: queryRecordSchema },
+    inbox: { type: 'array', items: inboxIndexSchema },
+  },
+} as const;
+export const backupManifestSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/backup-manifest-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'vaultId', 'snapshot', 'head', 'refs', 'ledger'],
+  properties: {
+    schemaVersion: { const: 1 },
+    vaultId: recordId,
+    snapshot: hash,
+    head: { type: 'string', pattern: '^[a-f0-9]{40}$' },
+    ledger: { type: 'boolean' },
+    refs: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['name', 'commit'],
+      properties: {
+        name: { type: 'string', pattern: '^refs/(heads|tags)/[A-Za-z0-9][A-Za-z0-9._/-]*$' },
+        commit: { type: 'string', pattern: '^[a-f0-9]{40}$' },
+      },
+    } },
+  },
+} as const;
+export type QueryIndex = FromSchema<typeof queryIndexSchema>;
+export type BackupManifest = FromSchema<typeof backupManifestSchema>;

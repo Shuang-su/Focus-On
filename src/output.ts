@@ -22,3 +22,28 @@ export async function outputDirectory(project: string, requested: string): Promi
 export async function writeOutput(directory: string, filename: string, text: string): Promise<void> {
   await writeFile(path.join(directory, filename), text, { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode: 0o600 });
 }
+
+export function transferPath(project: string, requested: string, label: string): string {
+  if (!requested || requested.startsWith('-')) throw new Error(label + ' path is required');
+  const destination = path.resolve(requested);
+  const root = path.resolve(project);
+  const scratch = path.join(root, '.codex-work', 'tmp');
+  const insideProject = destination === root || destination.startsWith(root + path.sep);
+  const insideScratch = destination === scratch || destination.startsWith(scratch + path.sep);
+  if (insideProject && !insideScratch) throw new Error(label + ' must stay outside this repository or inside .codex-work/tmp');
+  return destination;
+}
+
+export async function assertNoSymlink(target: string): Promise<void> {
+  const resolved = path.resolve(target);
+  let cursor = path.parse(resolved).root;
+  for (const segment of resolved.split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    try {
+      if ((await lstat(cursor)).isSymbolicLink()) throw new Error('Refusing to follow a symlink');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+  }
+}
