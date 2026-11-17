@@ -2,7 +2,7 @@
 
 收集值得关注的信息，安排想做的事情，记录实际发生的生活。
 
-本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具和本地授权写入闭环，尚未提供地图、应用界面、私有远端写入或后台自动采集。
+本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具、本地授权写入闭环，以及面向本地资料库的收件箱、收藏检索、生活事项、可重建查询索引、样本验收和备份恢复。尚未提供地图、应用界面、私有远端写入或后台自动采集。
 
 ## 开始使用
 
@@ -28,7 +28,26 @@ bash scripts/bootstrap.sh focus capture --request examples/requests/create-task.
 
 `confirm-finance` 只接受单独的 `--authorize finance-confirm`，并且不会把账目写成 confirmed。格式版本仍为 1，财务记录只保持 pending。GitHub 远端推送和 Linear 同步尚未启用；Issue 上的 FOCUS 状态只是本地映射。
 
-公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。执行 `focus schemas` 导出 JSON Schema。
+日常查询只读 vault 文件。`--vault` 必须出现在命令行上，这些命令不读取 `FOCUS_VAULT_PATH`。查询不会把待办改成完成，也不会把财务草稿改成 confirmed。收藏检索只匹配资料库里的标题、标签、链接、归档状态、来源和正文，不会访问 URL。
+
+```bash
+bash scripts/bootstrap.sh focus inbox --vault examples/vault
+bash scripts/bootstrap.sh focus search --vault examples/vault --query 餐厅
+bash scripts/bootstrap.sh focus life --vault examples/vault --kind task
+bash scripts/bootstrap.sh focus index --vault examples/vault --out .codex-work/tmp/index
+bash scripts/bootstrap.sh focus accept --vault examples/vault
+```
+
+`index` 每次从 vault 文件重建查询索引。索引不是正式记录，不进入数据 snapshot；删掉索引文件不会丢失收藏或待办。`--check FILE` 把已保存的索引和这次重建结果比较，不一致就失败。`--out` 必须位于来源资料库之外，避免把查询结果写进收藏或收件箱目录。`accept` 用调用方给出的 `--vault` 做样本验收：文件是正式来源，索引、收件箱、收藏检索和生活事项都必须能从这些文件解释。公开仓库只对 `examples/vault` 运行这条验收。私人样本留在调用方本机，不复制进本仓库。
+
+`backup` 把干净的本地 git 资料库打成不含远端地址的 bundle，并在存在本地录入账本时一并保存。资料库里的记录、正文、附件和收件箱文件必须已经提交且与 `HEAD` 一致；被忽略的请求不会被静默丢掉，备份会直接失败。`restore` 在新目录恢复该 bundle，核对 snapshot、`main` 和本地 ref 之后才返回。两个命令都拒绝 `github.com` 和 `focus-on-vault` 远端，也不执行 push。备份目录要放在本仓库之外，或放在 `.codex-work/tmp`；不要把私人备份提交到公开仓库。
+
+```bash
+bash scripts/bootstrap.sh focus backup --vault "$VAULT" --out .codex-work/tmp/backup
+bash scripts/bootstrap.sh focus restore --backup .codex-work/tmp/backup --vault .codex-work/tmp/restored
+```
+
+公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引和备份清单是从这些记录派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。
 
 公开示例 manifest 的全零 validator SHA 是合成测试标记；正式私有资料库固定实际本体 commit，升级需单独验证。剪藏摘要与笔记可保存在按记录 ID 关联的 Markdown 中。
 
