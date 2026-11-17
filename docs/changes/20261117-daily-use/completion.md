@@ -18,7 +18,7 @@
 
 收件箱、收藏检索和生活事项直接读 vault 文件。查询索引保存 vaultId、sourceSnapshot、记录路径、recordHash 和收件箱哈希，不保存为正式记录，也不改变 snapshot。`accept` 会重建索引两次，并核对磁盘上的记录字节、正文、生活事项状态和 stored 回执指向的记录。财务草稿仍必须是 pending。
 
-备份清单只含 vaultId、snapshot、head、本地 refs 和是否保存了录入账本。恢复后的资料库没有 origin。snapshot 或 refs 不一致时，新目录会被删除，命令失败。
+备份清单只含 vaultId、snapshot、head、本地 refs 和是否保存了录入账本。恢复后的资料库没有 origin。snapshot 或 refs 不一致时，新目录会被删除，命令失败。工作区中的 vault 文件若没有以相同字节出现在 `HEAD`，包括被 gitignore 或 exclude 忽略的收件箱，备份会失败。日常命令的 `--out` 不能落在来源资料库内部。
 
 ## 验证
 
@@ -30,7 +30,7 @@ bash scripts/bootstrap.sh focus validate --vault examples/vault
 bash scripts/bootstrap.sh focus accept --vault examples/vault
 ```
 
-`check` 包含构建、41 项测试、示例资料库校验和 `accept`。合成示例 snapshot 仍是 `801caa0c67dc26ccaf061b08fcfa75dd328d90b67911af5cf55d921b2e52cdce`。同一份示例重建出的查询索引摘要是 `938a46c046c50ba759d603c0f5119ec30b95d1cf1b4e15840fafbcabde7f2676`。测试使用 `examples/vault` 的临时 git 副本。Git 推送、`https://github.com/Shuang-su/focus-on-vault` 和 `git@github.com:Shuang-su/focus-on-vault.git` 在执行前被拒绝。
+`check` 包含构建、43 项测试、示例资料库校验和 `accept`。合成示例 snapshot 仍是 `801caa0c67dc26ccaf061b08fcfa75dd328d90b67911af5cf55d921b2e52cdce`。同一份示例重建出的查询索引摘要是 `938a46c046c50ba759d603c0f5119ec30b95d1cf1b4e15840fafbcabde7f2676`。测试使用 `examples/vault` 的临时 git 副本。Git 推送、`https://github.com/Shuang-su/focus-on-vault` 和 `git@github.com:Shuang-su/focus-on-vault.git` 在执行前被拒绝。
 
 ## 验收缺口
 

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { chmod, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { BackupManifest } from './contracts.js';
@@ -70,6 +70,25 @@ function cloneLocalBundle(bundle: string, destination: string): void {
 function unsetConfig(cwd: string, key: string): void {
   try { git(cwd, ['config', '--unset-all', key]); } catch { /* tracking key absent */ }
 }
+const vaultData = ['manifest.json', 'collections', 'notes', 'life', 'finance', 'entities', 'attachments', 'attachments-manifest', 'inbox'];
+async function vaultFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (relative: string): Promise<void> => {
+    const stat = await lstat(path.join(root, relative));
+    if (stat.isSymbolicLink()) throw new Error('Symlinks are not allowed in vault data');
+    if (stat.isFile()) { out.push(relative); return; }
+    if (!stat.isDirectory()) return;
+    for (const entry of await readdir(path.join(root, relative), { withFileTypes: true })) await walk(relative + '/' + entry.name);
+  };
+  for (const name of vaultData) if (!await absent(path.join(root, name))) await walk(name);
+  return out.sort((a, b) => a.localeCompare(b, 'en'));
+}
+function assertCommitted(cwd: string, relative: string): void {
+  let headBlob = '';
+  try { headBlob = git(cwd, ['rev-parse', '--verify', '--quiet', `HEAD:${relative}`]); }
+  catch { throw new Error('Backup requires ' + relative + ' to match HEAD'); }
+  if (headBlob !== git(cwd, ['hash-object', '--', relative])) throw new Error('Backup requires ' + relative + ' to match HEAD');
+}
 function materializeRefs(cwd: string, refs: readonly LocalRef[]): void {
   const present = new Map(localRefs(cwd).map(ref => [ref.name, ref.commit]));
   for (const ref of refs) {
@@ -94,6 +113,7 @@ export async function backupVault(project: string, vault: string, out: string): 
   await chmod(destination, 0o700);
   try {
     if (dirtyPaths(root).length) throw new Error('Vault worktree must be clean before backup');
+    for (const relative of await vaultFiles(root)) assertCommitted(root, relative);
     const opened = await readVault(root);
     const refs = localRefs(root);
     const tip = head(root);

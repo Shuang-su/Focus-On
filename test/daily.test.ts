@@ -239,6 +239,37 @@ test('backup and restore round-trip a local git vault without a remote', async (
   assert.throws(() => git(restored, ['push', 'origin', 'main']), /not enabled/);
 });
 
+test('query output cannot be written into the source vault', async () => {
+  const root = await gitVault('out-inside');
+  const before = await readVault(root);
+  const inside = path.join(root, 'collections');
+  const indexed = runCli(['index', '--vault', root, '--out', inside]);
+  assert.equal(indexed.status, 1, indexed.stdout);
+  assert.match(indexed.stdout, /outside the source vault/);
+  const names = gitExec(root, ['ls-files', '--others', '--exclude-standard', 'collections']);
+  assert.equal(names.includes('query-index.json'), false);
+  const inbox = runCli(['inbox', '--vault', root, '--out', path.join(root, 'inbox')]);
+  assert.equal(inbox.status, 1, inbox.stdout);
+  assert.match(inbox.stdout, /outside the source vault/);
+  assert.equal((await readVault(root)).snapshot, before.snapshot);
+  assert.equal((await acceptVault(root)).accepted, true);
+});
+
+test('backup refuses ignored inbox files that the snapshot does not cover', async () => {
+  const root = await gitVault('ignored-inbox');
+  const before = await readVault(root);
+  const request = await savedRequest(root);
+  await writeFile(path.join(root, '.git', 'info', 'exclude'), 'inbox/\n', { flag: 'a' });
+  assert.equal(gitExec(root, ['status', '--porcelain', '-uall']), '');
+  assert.equal((await readVault(root)).snapshot, before.snapshot);
+  assert.equal((await listInbox(root)).length, 1);
+  const out = path.join(await freshDir('ignored-backup'), 'backup');
+  await assert.rejects(backupVault(project, root, out), /match HEAD/);
+  await assert.rejects(readFile(path.join(out, 'backup.json')), { code: 'ENOENT' });
+  assert.equal((await listInbox(root))[0]!.requestId, request.requestId);
+  assert.equal((await readVault(root)).snapshot, before.snapshot);
+});
+
 test('backup and restore refuse private remotes, dirty trees, and unsafe paths', async () => {
   const remote = await gitVault('remote');
   const head = gitExec(remote, ['rev-parse', 'HEAD']);

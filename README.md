@@ -38,9 +38,9 @@ bash scripts/bootstrap.sh focus index --vault examples/vault --out .codex-work/t
 bash scripts/bootstrap.sh focus accept --vault examples/vault
 ```
 
-`index` 每次从 vault 文件重建查询索引。索引不是正式记录，不进入数据 snapshot；删掉索引文件不会丢失收藏或待办。`--check FILE` 把已保存的索引和这次重建结果比较，不一致就失败。`accept` 用调用方给出的 `--vault` 做样本验收：文件是正式来源，索引、收件箱、收藏检索和生活事项都必须能从这些文件解释。公开仓库只对 `examples/vault` 运行这条验收。私人样本留在调用方本机，不复制进本仓库。
+`index` 每次从 vault 文件重建查询索引。索引不是正式记录，不进入数据 snapshot；删掉索引文件不会丢失收藏或待办。`--check FILE` 把已保存的索引和这次重建结果比较，不一致就失败。`--out` 必须位于来源资料库之外，避免把查询结果写进收藏或收件箱目录。`accept` 用调用方给出的 `--vault` 做样本验收：文件是正式来源，索引、收件箱、收藏检索和生活事项都必须能从这些文件解释。公开仓库只对 `examples/vault` 运行这条验收。私人样本留在调用方本机，不复制进本仓库。
 
-`backup` 把干净的本地 git 资料库打成不含远端地址的 bundle，并在存在本地录入账本时一并保存。`restore` 在新目录恢复该 bundle，核对 snapshot、`main` 和本地 ref 之后才返回。两个命令都拒绝 `github.com` 和 `focus-on-vault` 远端，也不执行 push。备份目录要放在本仓库之外，或放在 `.codex-work/tmp`；不要把私人备份提交到公开仓库。
+`backup` 把干净的本地 git 资料库打成不含远端地址的 bundle，并在存在本地录入账本时一并保存。资料库里的记录、正文、附件和收件箱文件必须已经提交且与 `HEAD` 一致；被忽略的请求不会被静默丢掉，备份会直接失败。`restore` 在新目录恢复该 bundle，核对 snapshot、`main` 和本地 ref 之后才返回。两个命令都拒绝 `github.com` 和 `focus-on-vault` 远端，也不执行 push。备份目录要放在本仓库之外，或放在 `.codex-work/tmp`；不要把私人备份提交到公开仓库。
 
 ```bash
 bash scripts/bootstrap.sh focus backup --vault "$VAULT" --out .codex-work/tmp/backup

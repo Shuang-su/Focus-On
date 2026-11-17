@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export async function outputDirectory(project: string, requested: string): Promise<string> {
@@ -32,6 +32,17 @@ export function transferPath(project: string, requested: string, label: string):
   const insideScratch = destination === scratch || destination.startsWith(scratch + path.sep);
   if (insideProject && !insideScratch) throw new Error(label + ' must stay outside this repository or inside .codex-work/tmp');
   return destination;
+}
+
+export async function assertOutputOutsideVault(vault: string, requested: string): Promise<void> {
+  const destination = path.resolve(requested);
+  const logical = path.resolve(vault);
+  let physical = logical;
+  try { physical = await realpath(vault); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  for (const root of new Set([logical, physical])) {
+    if (destination === root || destination.startsWith(root + path.sep)) throw new Error('--out must stay outside the source vault');
+  }
 }
 
 export async function assertNoSymlink(target: string): Promise<void> {

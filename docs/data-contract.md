@@ -22,4 +22,4 @@ ChangeSet 包含相对数据路径、beforeHash/afterHash 和候选记录。Proc
 
 `focus accept --vault PATH` 是样本验收。它只使用该路径里的文件：校验记录，重建两次索引并要求结果相同，再核对索引哈希、收件箱、收藏检索、生活事项状态和 pending 财务草稿。验收不修改资料库。公开 CI 对合成 `examples/vault` 运行；真实样本由调用方在本地传入自己的 vault，不把私人记录放进公开仓库。
 
-`backupManifest` 也是 schemaVersion 1 的派生文档，字段只有 vaultId、snapshot、head、本地 refs 和是否包含录入账本。清单不记录绝对路径或远端 URL。`backup` 要求干净的本地 `main`，并拒绝带有 `github.com` 或 `focus-on-vault` 远端的资料库。`restore` 只从本地 bundle 克隆到新目录，移除 origin，再核对 snapshot、HEAD 和 refs。网络写入仍然关闭。
+`backupManifest` 也是 schemaVersion 1 的派生文档，字段只有 vaultId、snapshot、head、本地 refs 和是否包含录入账本。清单不记录绝对路径或远端 URL。`backup` 要求干净的本地 `main`，并拒绝带有 `github.com` 或 `focus-on-vault` 远端的资料库。工作区里的 manifest、记录、正文、附件和 inbox 文件必须与 `HEAD` 的字节一致；被 `.gitignore` 或 exclude 忽略、因而不会进入 bundle 的请求和回执会导致备份失败，避免恢复后静默丢掉收件箱。`restore` 只从本地 bundle 克隆到新目录，移除 origin，再核对 snapshot、HEAD 和 refs。网络写入仍然关闭。日常命令的 `--out` 必须位于来源资料库之外，派生的查询结果不能写进正式记录目录。
