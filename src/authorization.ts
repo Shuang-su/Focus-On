@@ -1,6 +1,7 @@
 export const captureGrant = 'capture';
 export const financeConfirmGrant = 'finance-confirm';
-const knownGrants = new Set([captureGrant, financeConfirmGrant]);
+export const placeConfirmGrant = 'place-confirm';
+const knownGrants = new Set([captureGrant, financeConfirmGrant, placeConfirmGrant]);
 
 export function unknownGrants(grants: readonly string[]): string[] {
   return grants.filter(grant => !knownGrants.has(grant));
@@ -25,6 +26,13 @@ export function assertCaptureAuthorized(grants: readonly string[], request: unkn
   if (!confirmationAttempt(request)) return;
   if (!grants.includes(financeConfirmGrant)) throw new Error('Finance confirmation requires a separate --authorize finance-confirm and is not applied.');
   throw new Error('Finance confirmation was separately authorized but is not applied. Format v1 only stores pending drafts.');
+}
+
+export function assertPlaceConfirmAuthorized(grants: readonly string[]): void {
+  const unknown = unknownGrants(grants);
+  if (unknown.length) throw new Error('Unknown authorization: ' + unknown.join(', '));
+  if (!grants.includes(placeConfirmGrant)) throw new Error('Place confirmation required: pass --authorize place-confirm. Matching only proposes candidates.');
+  if (grants.includes(financeConfirmGrant)) throw new Error('Finance confirmation was separately authorized but is not applied. Format v1 only stores pending drafts.');
 }
 
 export function refuseFinanceConfirmation(grants: readonly string[]): never {

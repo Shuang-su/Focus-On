@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "pack_synthetic_design",
+  "title": "合成设计参考包",
+  "synthetic": true,
+  "fragments": [
+    {
+      "id": "fragment_restaurant_copy",
+      "recordId": "collection_sample",
+      "heading": "合成餐厅收藏"
+    },
+    {
+      "id": "fragment_note_copy",
+      "recordId": "note_sample",
+      "heading": "合成笔记"
+    }
+  ]
+}

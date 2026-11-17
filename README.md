@@ -2,7 +2,7 @@
 
 收集值得关注的信息，安排想做的事情，记录实际发生的生活。
 
-本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具、本地授权写入闭环，以及面向本地资料库的收件箱、收藏检索、生活事项、可重建查询索引、样本验收和备份恢复。尚未提供地图、应用界面、私有远端写入或后台自动采集。
+本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具、本地授权写入闭环、日常查询，以及从本地资料派生的地点匹配、收藏地图和设计参考包。尚未提供应用界面、在线地理编码、私有远端写入或后台自动采集。
 
 ## 开始使用
 
@@ -47,7 +47,22 @@ bash scripts/bootstrap.sh focus backup --vault "$VAULT" --out .codex-work/tmp/ba
 bash scripts/bootstrap.sh focus restore --backup .codex-work/tmp/backup --vault .codex-work/tmp/restored
 ```
 
-公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引和备份清单是从这些记录派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。
+地点、地图和参考包同样只读调用方传入的 `--vault`，不读取 `FOCUS_VAULT_PATH`。`match-place` 用资料库里已有坐标的地点，以及调用方给出的离线候选目录，提出候选。默认目录 `examples/context/place-candidates.json` 是合成占位坐标，不是实测地点。匹配结果里的 `confirmed` 固定为 false，命令不会访问网络地理编码。
+
+`confirm-place` 把其中一个候选写成地点记录上的 `locationStatus: confirmed` 和坐标。没有 `--authorize place-confirm` 时它拒绝执行，资料库保持不变。`--authorize capture` 不能代替这个授权。`capture` 即使同时带上 `--authorize place-confirm`，也不能把地点直接写成 confirmed；确认只走 `confirm-place`，并且只复制当次匹配到的候选。写入复用本地 git 录入闭环，拒绝 `github.com` 和 `focus-on-vault` 远端，不推送，也不把财务草稿改成 confirmed。
+
+```bash
+bash scripts/bootstrap.sh focus places --vault examples/vault
+bash scripts/bootstrap.sh focus match-place --vault examples/vault --place place_sample
+bash scripts/bootstrap.sh focus map --vault examples/vault --out .codex-work/tmp/map
+bash scripts/bootstrap.sh focus fragments --vault examples/vault --pack examples/context/reference-pack.json --out .codex-work/tmp/pack
+# 在合成资料的临时本地 git 副本上确认。不要把 examples/vault 或私有远端当作写入目标。
+bash scripts/bootstrap.sh focus confirm-place --vault "$VAULT" --place place_sample --candidate fixture_synth_hall --authorize place-confirm --out .codex-work/tmp/place
+```
+
+`map` 只给已经有坐标的地点生成点。没有坐标的地点和尚未连到这些地点的收藏进入 unplaced，不会被填上假坐标。GeoJSON 使用 `[longitude, latitude]`，并保留记录里的 WGS84 或 GCJ02，不做基准面换算。`fragments` 不带 `--pack` 时，只收集带有标签 `design` 的收藏；`--pack` 再按合成或调用方提供的片段包提取关联 Markdown。标签区分大小写。`--out` 必须位于来源资料库之外。
+
+公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引、备份清单、地点列表、地点匹配、收藏地图和参考包是从这些记录派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。
 
 公开示例 manifest 的全零 validator SHA 是合成测试标记；正式私有资料库固定实际本体 commit，升级需单独验证。剪藏摘要与笔记可保存在按记录 ID 关联的 Markdown 中。
 
