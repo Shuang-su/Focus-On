@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, lstat, realpath } from 'node:fs/promises';
+import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
@@ -20,14 +20,42 @@ export function canonical(value: unknown): string {
 export const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 const domains = ['collections', 'notes', 'life', 'finance', 'entities', 'attachments-manifest'];
 export interface VaultSnapshot { root: string; manifest: VaultManifest; records: Map<string, { path: string; record: RecordData }>; requests: Map<string, CaptureRequest>; snapshot: string; errors: string[] }
+export function assertSafeRelative(relative: string): void {
+  if (!relative || path.isAbsolute(relative) || relative.includes('\\') || relative.split('/').some(part => part === '..' || part === '.' || part === '' || part.startsWith('.'))) throw new Error('Unsafe relative data path');
+}
 export async function safeFile(root: string, relative: string): Promise<string> {
-  if (!relative || path.isAbsolute(relative) || relative.includes('\\') || relative.split('/').some(x => x === '..' || x === '.' || x === '') || relative.split('/').some(x => x.startsWith('.'))) throw new Error('Unsafe relative data path');
+  assertSafeRelative(relative);
   let cursor = root;
   for (const segment of relative.split('/')) {
     cursor = path.join(cursor, segment);
     if ((await lstat(cursor)).isSymbolicLink()) throw new Error('Symlinks are not allowed in vault data');
   }
   return cursor;
+}
+const writableRoot = /^(collections|notes|life|finance|entities|attachments-manifest|attachments|inbox)\//;
+export async function prepareWrite(root: string, relative: string): Promise<string> {
+  assertSafeRelative(relative);
+  if (!writableRoot.test(relative)) throw new Error('Unsafe relative data path');
+  let cursor = root;
+  const parts = relative.split('/');
+  for (let index = 0; index < parts.length; index += 1) {
+    cursor = path.join(cursor, parts[index]!);
+    const isFinal = index === parts.length - 1;
+    try {
+      const stat = await lstat(cursor);
+      if (stat.isSymbolicLink()) throw new Error('Symlinks are not allowed in vault data');
+      if (!isFinal && !stat.isDirectory()) throw new Error('Unsafe relative data path');
+      if (isFinal && !stat.isFile()) throw new Error('Unsafe relative data path');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (!isFinal) await mkdir(cursor);
+    }
+  }
+  return cursor;
+}
+export async function readOptionalFile(root: string, relative: string): Promise<Buffer | undefined> {
+  try { return await readFile(await safeFile(root, relative)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
 }
 async function files(root: string, relative: string): Promise<string[]> {
   const target = path.join(root, relative);

@@ -2,15 +2,25 @@ import { readFile, statfs } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readVault } from './vault.js';
+import { refuseFinanceConfirmation } from './authorization.js';
+import { digest, readVault } from './vault.js';
 import { planChanges } from './planner.js';
-import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema } from './contracts.js';
+import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema, type ChangeSet } from './contracts.js';
 import { outputDirectory, writeOutput } from './output.js';
+import { captureChanges, readContentDirectory } from './writer.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const [command, ...args] = process.argv.slice(2);
 const arg = (flag: string) => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
+const repeated = (flag: string) => args.flatMap((value, index) => value === flag ? [args[index + 1]].filter((item): item is string => !!item && !item.startsWith('--')) : []);
 const json = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+async function loadPrevious(explicit: string | undefined, destination: string | undefined): Promise<ChangeSet | undefined> {
+  const previousFile = explicit ?? (destination ? path.join(destination, 'change-set.json') : undefined);
+  if (!previousFile) return undefined;
+  try { return JSON.parse(await readFile(previousFile, 'utf8')) as ChangeSet; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || explicit) throw error; }
+  return undefined;
+}
 try {
   if (command === 'doctor') {
     let git = 'unavailable'; try { git = execFileSync('git', ['status', '--short', '--branch'], { cwd: root, encoding: 'utf8' }).trim(); } catch {}
@@ -27,19 +37,38 @@ try {
     const input = arg('--request'); if (!vault || !input) throw new Error('--vault and --request are required');
     const output = arg('--out');
     const destination = output ? await outputDirectory(root, output) : undefined;
-    const previousFile = arg('--previous') ?? (destination ? path.join(destination, 'change-set.json') : undefined);
-    let previous;
-    if (previousFile) {
-      try { previous = JSON.parse(await readFile(previousFile, 'utf8')); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || arg('--previous')) throw error; }
-    }
-    const result = await planChanges(JSON.parse(await readFile(input, 'utf8')), vault, previous);
-    if (output) {
-      await writeOutput(destination!, 'change-set.json', JSON.stringify(result.changeSet, null, 2) + '\n');
-      await writeOutput(destination!, 'receipt.json', JSON.stringify(result.receipt, null, 2) + '\n');
-      for (const [i, change] of result.changeSet.changes.entries()) await writeOutput(destination!, `change-${i}.diff`, `${change.op} ${change.path}\nbase ${change.beforeHash ?? 'new'}\n+${JSON.stringify(change.record)}\n`);
+    const result = await planChanges(JSON.parse(await readFile(input, 'utf8')), vault, await loadPrevious(arg('--previous'), destination));
+    if (destination) {
+      await writeOutput(destination, 'change-set.json', JSON.stringify(result.changeSet, null, 2) + '\n');
+      await writeOutput(destination, 'receipt.json', JSON.stringify(result.receipt, null, 2) + '\n');
+      for (const [i, change] of result.changeSet.changes.entries()) await writeOutput(destination, `change-${i}.diff`, `${change.op} ${change.path}\nbase ${change.beforeHash ?? 'new'}\n+${JSON.stringify(change.record)}\n`);
     }
     json(result);
+  } else if (command === 'capture') {
+    const vault = arg('--vault') ?? process.env.FOCUS_VAULT_PATH;
+    const input = arg('--request'); if (!vault || !input) throw new Error('--vault and --request are required');
+    const output = arg('--out');
+    const destination = output ? await outputDirectory(root, output) : undefined;
+    const contentDir = arg('--content');
+    const content = contentDir ? await readContentDirectory(contentDir) : undefined;
+    const result = await captureChanges({ request: JSON.parse(await readFile(input, 'utf8')), vault, grants: repeated('--authorize'), content, previous: await loadPrevious(arg('--previous'), destination) });
+    if (destination) {
+      await writeOutput(destination, 'change-set.json', JSON.stringify(result.changeSet, null, 2) + '\n');
+      await writeOutput(destination, 'receipt.json', JSON.stringify(result.receipt, null, 2) + '\n');
+      await writeOutput(destination, 'issue.json', JSON.stringify({ number: result.issue.number, url: result.issue.url, focusState: result.issue.focusState, linear: result.issue.linear }, null, 2) + '\n');
+      for (const [i, change] of result.changeSet.changes.entries()) {
+        const record = change.record;
+        const body = 'bodyPath' in record && record.bodyPath && content?.has(record.bodyPath) ? `body ${record.bodyPath} ${digest(content.get(record.bodyPath)!)}\n` : '';
+        await writeOutput(destination, `change-${i}.diff`, `${change.op} ${change.path}\nbase ${change.beforeHash ?? 'new'}\n+${JSON.stringify(change.record)}\n${body}`);
+      }
+    }
+    json(result);
+  } else if (command === 'confirm-finance') {
+    const vault = arg('--vault') ?? process.env.FOCUS_VAULT_PATH;
+    const input = arg('--request'); if (!vault || !input) throw new Error('--vault and --request are required');
+    JSON.parse(await readFile(input, 'utf8'));
+    await readVault(vault);
+    refuseFinanceConfirmation(repeated('--authorize'));
   } else if (command === 'schemas') json({ manifest: manifestSchema, record: recordSchema, captureRequest: captureRequestSchema, changeSet: changeSetSchema, processingReceipt: processingReceiptSchema });
-  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | schemas');
+  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | capture --request FILE --vault PATH --authorize capture [--content DIR] [--out .codex-work/tmp/NAME] | confirm-finance --request FILE --vault PATH --authorize finance-confirm | schemas');
 } catch (e) { json({ error: e instanceof Error ? e.message : 'Unknown error' }); process.exitCode = 1; }
