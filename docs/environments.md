@@ -17,6 +17,8 @@ bash scripts/bootstrap.sh focus plan --request examples/requests/create-task.jso
 
 返回 change-set.json、receipt.json、测试摘要和所运行 commit SHA。本机重算并比较 requestId、inputHash、baseSnapshot、branch、afterHash。不要把容器里的绝对路径作为数据契约。
 
+云端交接保持 plan。`capture` 和 `confirm-finance` 只接受命令行 `--vault`，不读取 `FOCUS_VAULT_PATH`。`capture` 还要传入 `--authorize capture` 才写本地 git 资料库。它不推送远端，遇到 `github.com` 或 `focus-on-vault` 远端会拒绝。私有仓库的 live 写入留到后续单独启用；测试使用 `examples/vault` 的临时副本或 mock，不访问私有远端。
+
 GitHub Actions 的 Linux 验证与 Codex/Dots 实测分别记录。后者需要真实任务链接与取回内容；授权或云入口尚未就绪时标待验收。
 
 旧 Codex Cloud 可使用 setup/maintenance scripts、固定 Node 版本和网络设置；Work/Dots 按实际账户入口测试。官方资料：[Cloud](https://learn.chatgpt.com/docs/environments/cloud-environment)、[Dots tasks](https://learn.chatgpt.com/docs/dots/tasks-and-memory)、[MCP Events](https://developers.openai.com/plugins/build/mcp-events)。固定周期需要已保存调度；Events 需要持久订阅服务。本轮没有常驻服务器或自动监控。

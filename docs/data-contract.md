@@ -10,6 +10,6 @@
 
 请求保留 input.text 原文并固定 baseSnapshot。create ID 为 `rec_` + SHA256(vaultId + ':' + requestId + ':' + inputVersion + ':' + operationIndex) 的前24位。update 保持 ID、kind、createdAt，使用 expectedRevision 和 revision+1。请求重试复用 ID、分支、inputHash；变更基准变化则重新核对，不覆盖。使用原 --out 目录重试会自动读取原 ChangeSet，检测相同版本的输入变更；另一台机器应传 --previous 原 change-set.json。首次处理前必须保存请求版本，不能在跨机器交接中丢弃前次计划。
 
-ChangeSet 包含相对数据路径、beforeHash/afterHash 和候选记录。ProcessingReceipt 的 planned/awaiting_merge/stored 等表示处理状态，stored 需要真实合并和读回证据。基础 planner 只生成 planned/verified=false；文件副本与附件写入由后续受控 writer 提供。
+ChangeSet 包含相对数据路径、beforeHash/afterHash 和候选记录。ProcessingReceipt 的 planned、awaiting_merge、needs_input、failed 与 stored 表示处理状态。stored 必须 verified=true，并带有合并 commit。`plan` 只生成 planned/verified=false，不写资料库，也不接收正文或已保存附件。`capture` 在 `--authorize capture` 之后把同一请求版本写入本地 git 资料库：保存请求、本地 Issue、唯一分支和 PR、合并、读回，然后才写 stored。`--content` 中的正文和附件必须逐字节匹配；可读副本与 saved 附件没有内容时仍然拒绝。重试复用请求 ID、inputHash、分支、Issue 和 PR。基准或同版本输入冲突不覆盖原数据。合并成功但回执写入失败时，重试按原合并 commit 读回并补写回执，不新建记录。财务确认需要单独的 `--authorize finance-confirm`，格式 v1 仍只保存 pending，确认不会被执行。GitHub 远端写入和 Linear 同步不在本阶段启用。
 
 校验器同时检查 inbox/requests 的 CaptureRequest 与重复请求版本、inbox/receipts 的回执。planner 会核对已保存的同一请求版本，输入变动未升版时报冲突。历史请求/回执不参与数据 snapshot，避免把基准哈希写入自身。
