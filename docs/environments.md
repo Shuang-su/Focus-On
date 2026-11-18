@@ -19,6 +19,8 @@ bash scripts/bootstrap.sh focus plan --request examples/requests/create-task.jso
 
 云端交接保持 plan。`capture` 和 `confirm-finance` 只接受命令行 `--vault`，不读取 `FOCUS_VAULT_PATH`。`capture` 还要传入 `--authorize capture` 才写本地 git 资料库。它不推送远端，遇到 `github.com` 或 `focus-on-vault` 远端会拒绝。私有仓库的 live 写入留到后续单独启用；测试使用 `examples/vault` 的临时副本或 mock，不访问私有远端。
 
+`places`、`match-place`、`map`、`fragments` 和 `confirm-place` 也只接受命令行 `--vault`，不读取 `FOCUS_VAULT_PATH`。`match-place` 只读 vault 文件和调用方给出的离线候选目录，默认候选是仓库里的合成占位坐标。它不调用网络地理编码。`confirm-place` 还要传入 `--authorize place-confirm` 才把已匹配候选写入本地 git 资料库；`--authorize capture` 不能代替。它不推送远端，遇到 `github.com` 或 `focus-on-vault` 远端会拒绝。`map` 和 `fragments` 的 `--out` 必须位于来源资料库之外。公开验证仍对合成 `examples/vault` 做只读视图；确认命令的测试使用该目录的临时 git 副本。
+
 `inbox`、`search`、`life`、`index`、`accept`、`backup`、`restore` 同样只接受命令行 `--vault` 或显式备份路径，不读取 `FOCUS_VAULT_PATH`。`accept` 以该目录里的文件为正式记录，在内存里重建查询索引。公开验证运行 `bash scripts/bootstrap.sh focus accept --vault examples/vault`。私人样本只在调用方本机的 `--vault` 上验收，不进入公开仓库或 CI 日志里的业务正文。`backup` / `restore` 只读写本地 git 目录和本地 bundle，不添加远端，也不推送。备份若含私人内容，应放在仓库外或 `.codex-work/tmp`，并且不要提交。
 
 GitHub Actions 的 Linux 验证与 Codex/Dots 实测分别记录。后者需要真实任务链接与取回内容；授权或云入口尚未就绪时标待验收。

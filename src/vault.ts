@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, type RecordData, type VaultManifest, type CaptureRequest, type ProcessingReceipt } from './contracts.js';
+import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, type RecordData, type VaultManifest, type CaptureRequest, type ProcessingReceipt } from './contracts.js';
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 (addFormats as unknown as (instance: Ajv2020) => void)(ajv);
@@ -14,6 +14,12 @@ export const validateChangeSet = ajv.compile(changeSetSchema);
 export const validateReceipt = ajv.compile(processingReceiptSchema);
 export const validateQueryIndex = ajv.compile(queryIndexSchema);
 export const validateBackupManifest = ajv.compile(backupManifestSchema);
+export const validatePlaceList = ajv.compile(placeListSchema);
+export const validatePlaceCatalog = ajv.compile(placeCandidateCatalogSchema);
+export const validatePlaceMatch = ajv.compile(placeMatchSchema);
+export const validateCollectionMap = ajv.compile(collectionMapSchema);
+export const validateFragmentPack = ajv.compile(fragmentPackSchema);
+export const validateReferencePack = ajv.compile(referencePackSchema);
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}';

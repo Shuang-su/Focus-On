@@ -150,5 +150,190 @@ export const backupManifestSchema = {
     } },
   },
 } as const;
+const locationLabel = { enum: ['unconfirmed', 'confirmed', 'unset'] } as const;
+const coordinateValue = {
+  type: 'object', additionalProperties: false,
+  required: ['latitude', 'longitude', 'system', 'evidence'],
+  properties: {
+    latitude: { type: 'number', minimum: -90, maximum: 90 },
+    longitude: { type: 'number', minimum: -180, maximum: 180 },
+    system: { enum: ['WGS84', 'GCJ02'] },
+    evidence: { type: 'string', minLength: 1, maxLength: 4000 },
+  },
+} as const;
+const relativePath = { type: 'string', minLength: 1, maxLength: 500 } as const;
+export const placeListSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/place-list-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'sourceSnapshot', 'places'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'placeList' }, vaultId: recordId, sourceSnapshot: hash,
+    places: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'path', 'title', 'revision', 'updatedAt', 'locationStatus', 'links'],
+      properties: {
+        id: recordId, path: relativePath, title: { type: 'string', minLength: 1, maxLength: 500 },
+        revision: { type: 'integer', minimum: 1 }, updatedAt: { type: 'string', format: 'date-time' },
+        locationStatus: locationLabel, links: { type: 'array', items: recordId, uniqueItems: true },
+        coordinates: coordinateValue,
+      },
+    } },
+  },
+} as const;
+export const placeCandidateCatalogSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/place-candidate-catalog-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'synthetic', 'candidates'],
+  properties: {
+    schemaVersion: { const: 1 }, synthetic: { type: 'boolean' },
+    candidates: { type: 'array', maxItems: 500, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'names', 'latitude', 'longitude', 'system', 'evidence', 'recordedAt'],
+      properties: {
+        id: recordId,
+        names: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 2, maxLength: 200 } },
+        latitude: { type: 'number', minimum: -90, maximum: 90 },
+        longitude: { type: 'number', minimum: -180, maximum: 180 },
+        system: { enum: ['WGS84', 'GCJ02'] },
+        evidence: { type: 'string', minLength: 1, maxLength: 500 },
+        recordedAt: { type: 'string', format: 'date-time' },
+      },
+    } },
+  },
+} as const;
+export const placeMatchSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/place-match-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'sourceSnapshot', 'placeId', 'title', 'locationStatus', 'confirmed', 'proposalsOnly', 'geocoder', 'candidates'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'placeMatch' }, vaultId: recordId, sourceSnapshot: hash,
+    placeId: recordId, title: { type: 'string', minLength: 1, maxLength: 500 }, locationStatus: locationLabel,
+    confirmed: { const: false }, proposalsOnly: { const: true }, geocoder: { const: 'disabled' },
+    query: { type: 'string', maxLength: 2000 },
+    candidates: { type: 'array', maxItems: 100, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'source', 'title', 'score', 'matched', 'coordinates', 'recordedAt', 'synthetic', 'candidateHash'],
+      properties: {
+        id: recordId, source: { enum: ['vault', 'fixture'] }, sourceRecordId: recordId,
+        title: { type: 'string', minLength: 1, maxLength: 500 },
+        score: { type: 'integer', minimum: 1, maximum: 100 },
+        matched: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 400 } },
+        coordinates: coordinateValue, recordedAt: { type: 'string', format: 'date-time' },
+        synthetic: { type: 'boolean' }, candidateHash: hash,
+      },
+    } },
+  },
+} as const;
+const collectionRefSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['id', 'path', 'title', 'archiveStatus', 'tags'],
+  properties: {
+    id: recordId, path: relativePath, title: { type: 'string', minLength: 1, maxLength: 500 },
+    archiveStatus: { enum: ['link_only', 'partial', 'readable_copy', 'needs_input'] },
+    tags: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+    url: { type: 'string', format: 'uri' },
+  },
+} as const;
+const pointSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['type', 'coordinates'],
+  properties: {
+    type: { const: 'Point' },
+    coordinates: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } },
+  },
+} as const;
+export const collectionMapSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/collection-map-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'sourceSnapshot', 'view', 'features', 'unplacedPlaces', 'unplacedCollections', 'geojson'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'collectionMap' }, vaultId: recordId, sourceSnapshot: hash,
+    view: { const: 'geojson-points' },
+    features: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'path', 'title', 'locationStatus', 'system', 'longitude', 'latitude', 'evidence', 'collections'],
+      properties: {
+        id: recordId, path: relativePath, title: { type: 'string', minLength: 1, maxLength: 500 },
+        locationStatus: locationLabel, system: { enum: ['WGS84', 'GCJ02'] },
+        longitude: { type: 'number', minimum: -180, maximum: 180 }, latitude: { type: 'number', minimum: -90, maximum: 90 },
+        evidence: { type: 'string', minLength: 1, maxLength: 4000 },
+        collections: { type: 'array', items: collectionRefSchema },
+      },
+    } },
+    unplacedPlaces: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['id', 'path', 'title', 'locationStatus'],
+      properties: { id: recordId, path: relativePath, title: { type: 'string', minLength: 1, maxLength: 500 }, locationStatus: locationLabel },
+    } },
+    unplacedCollections: { type: 'array', items: collectionRefSchema },
+    geojson: {
+      type: 'object', additionalProperties: false, required: ['type', 'features'],
+      properties: {
+        type: { const: 'FeatureCollection' },
+        features: { type: 'array', items: {
+          type: 'object', additionalProperties: false, required: ['type', 'id', 'geometry', 'properties'],
+          properties: {
+            type: { const: 'Feature' }, id: recordId, geometry: pointSchema,
+            properties: {
+              type: 'object', additionalProperties: false,
+              required: ['title', 'locationStatus', 'system', 'evidence', 'path', 'collections'],
+              properties: {
+                title: { type: 'string', minLength: 1, maxLength: 500 }, locationStatus: locationLabel,
+                system: { enum: ['WGS84', 'GCJ02'] }, evidence: { type: 'string', minLength: 1, maxLength: 4000 },
+                path: relativePath, collections: { type: 'array', items: recordId, uniqueItems: true },
+              },
+            },
+          },
+        } },
+      },
+    },
+  },
+} as const;
+export const fragmentPackSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/fragment-pack-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'id', 'title', 'synthetic', 'fragments'],
+  properties: {
+    schemaVersion: { const: 1 }, id: recordId, title: { type: 'string', minLength: 1, maxLength: 500 }, synthetic: { type: 'boolean' },
+    fragments: { type: 'array', maxItems: 200, items: {
+      type: 'object', additionalProperties: false, required: ['id', 'recordId'],
+      properties: {
+        id: recordId, recordId, heading: { type: 'string', minLength: 1, maxLength: 500 },
+      },
+    } },
+  },
+} as const;
+export const referencePackSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/reference-pack-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'sourceSnapshot', 'packId', 'title', 'synthetic', 'fragments'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'referencePack' }, vaultId: recordId, sourceSnapshot: hash,
+    packId: recordId, title: { type: 'string', minLength: 1, maxLength: 500 }, synthetic: { type: 'boolean' },
+    fragments: { type: 'array', maxItems: 300, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'recordId', 'kind', 'path', 'title', 'excerpt', 'tags', 'source', 'origin'],
+      properties: {
+        id: recordId, recordId, kind: { enum: ['collection', 'note'] }, path: relativePath,
+        bodyPath: relativePath, title: { type: 'string', minLength: 1, maxLength: 500 },
+        excerpt: { type: 'string', minLength: 1, maxLength: 8000 },
+        tags: { type: 'array', items: { type: 'string' }, uniqueItems: true },
+        source: common.source, origin: { enum: ['pack', 'tag'] },
+        archiveStatus: { enum: ['link_only', 'partial', 'readable_copy', 'needs_input'] },
+      },
+    } },
+  },
+} as const;
 export type QueryIndex = FromSchema<typeof queryIndexSchema>;
 export type BackupManifest = FromSchema<typeof backupManifestSchema>;
+export type PlaceList = FromSchema<typeof placeListSchema>;
+export type PlaceCandidateCatalog = FromSchema<typeof placeCandidateCatalogSchema>;
+export type PlaceMatch = FromSchema<typeof placeMatchSchema>;
+export type CollectionMap = FromSchema<typeof collectionMapSchema>;
+export type FragmentPack = FromSchema<typeof fragmentPackSchema>;
+export type ReferencePack = FromSchema<typeof referencePackSchema>;

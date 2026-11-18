@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { readdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertCaptureAuthorized } from './authorization.js';
+import { assertCaptureAuthorized, placeConfirmGrant } from './authorization.js';
 import type { CaptureRequest, ChangeSet, ProcessingReceipt, RecordData } from './contracts.js';
 import { focusStates, type FocusState } from './focus-state.js';
 import {
@@ -28,6 +28,7 @@ export interface CaptureInput {
   content?: ReadonlyMap<string, Uint8Array>;
   previous?: ChangeSet;
   hooks?: CaptureHooks;
+  placeConfirmation?: boolean;
 }
 export interface CaptureResult {
   changeSet: ChangeSet;
@@ -57,6 +58,11 @@ export async function readContentDirectory(directory: string): Promise<Map<strin
   return content;
 }
 
+function confirmsNewLocation(existing: RecordData | undefined, record: RecordData): boolean {
+  if (record.kind !== 'entity' || record.entityType !== 'place' || record.locationStatus !== 'confirmed') return false;
+  if (!existing || existing.kind !== 'entity' || existing.entityType !== 'place' || existing.locationStatus !== 'confirmed') return true;
+  return canonical(existing.coordinates ?? null) !== canonical(record.coordinates ?? null);
+}
 const requestKeyOf = (request: CaptureRequest) => request.requestId + '/v' + request.inputVersion;
 const requestPath = (request: CaptureRequest) => `inbox/requests/${request.requestId}-v${request.inputVersion}.json`;
 const receiptPath = (request: CaptureRequest) => `inbox/receipts/${request.requestId}-v${request.inputVersion}.json`;
@@ -213,6 +219,9 @@ export async function captureChanges(input: CaptureInput): Promise<CaptureResult
   const vault = await readVault(root);
   if (vault.errors.length) throw new Error('Invalid vault: ' + vault.errors.join('; '));
   const inputHash = digest(canonical(request));
+  if (request.operations.some((operation: CaptureRequest['operations'][number]) => confirmsNewLocation(vault.records.get(operation.record.id)?.record, operation.record))) {
+    if (!input.placeConfirmation || !input.grants.includes(placeConfirmGrant)) throw new Error('Place confirmation requires --authorize place-confirm and is only applied by confirm-place.');
+  }
   const branch = `capture/${request.requestId}/v${request.inputVersion}`;
   if (!branchPattern.test(branch)) throw new Error('Unsafe capture branch');
   const saved = vault.requests.get(requestKey);

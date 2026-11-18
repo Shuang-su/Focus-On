@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { refuseFinanceConfirmation } from './authorization.js';
 import { digest, readVault } from './vault.js';
 import { planChanges } from './planner.js';
-import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, type ChangeSet } from './contracts.js';
+import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, type ChangeSet } from './contracts.js';
 import { assertOutputOutsideVault, outputDirectory, writeOutput } from './output.js';
 import { captureChanges, readContentDirectory } from './writer.js';
 import { acceptVault, assertSavedIndex, buildQueryIndex, indexDigest, listInbox, listLife, searchCollections } from './query.js';
 import { backupVault, restoreVault } from './backup.js';
+import { buildCollectionMap, buildReferencePack, confirmPlace, listPlaces, matchPlace } from './context.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const [command, ...args] = process.argv.slice(2);
@@ -22,6 +23,14 @@ async function emit(vault: string, commandOut: string | undefined, filename: str
 }
 const repeated = (flag: string) => args.flatMap((value, index) => value === flag ? [args[index + 1]].filter((item): item is string => !!item && !item.startsWith('--')) : []);
 const json = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+const jsonText = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
+const defaultCandidates = path.join(root, 'examples/context/place-candidates.json');
+async function emitFiles(vault: string, commandOut: string | undefined, files: ReadonlyArray<[string, string]>): Promise<void> {
+  if (!commandOut) return;
+  await assertOutputOutsideVault(vault, commandOut);
+  const destination = await outputDirectory(root, commandOut);
+  for (const [filename, text] of files) await writeOutput(destination, filename, text);
+}
 async function loadPrevious(explicit: string | undefined, destination: string | undefined): Promise<ChangeSet | undefined> {
   const previousFile = explicit ?? (destination ? path.join(destination, 'change-set.json') : undefined);
   if (!previousFile) return undefined;
@@ -111,6 +120,41 @@ try {
     json(await backupVault(root, explicit('--vault'), explicit('--out')));
   } else if (command === 'restore') {
     json(await restoreVault(root, explicit('--backup'), explicit('--vault')));
-  } else if (command === 'schemas') json({ manifest: manifestSchema, record: recordSchema, captureRequest: captureRequestSchema, changeSet: changeSetSchema, processingReceipt: processingReceiptSchema, queryIndex: queryIndexSchema, backupManifest: backupManifestSchema });
-  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | capture --request FILE --vault PATH --authorize capture [--content DIR] [--out .codex-work/tmp/NAME] | confirm-finance --request FILE --vault PATH --authorize finance-confirm | inbox --vault PATH [--status STATUS] [--out .codex-work/tmp/NAME] | search --vault PATH [--query TEXT] [--tag TAG] [--out .codex-work/tmp/NAME] | life --vault PATH [--kind task|plan|wishlist] [--status STATUS] [--out .codex-work/tmp/NAME] | index --vault PATH [--out .codex-work/tmp/NAME] [--check FILE] | accept --vault PATH [--out .codex-work/tmp/NAME] | backup --vault PATH --out DIR | restore --backup DIR --vault PATH | schemas');
+  } else if (command === 'places') {
+    const vault = explicit('--vault');
+    const places = await listPlaces(vault);
+    await emitFiles(vault, arg('--out'), [['places.json', jsonText(places)]]);
+    json(places);
+  } else if (command === 'match-place') {
+    const vault = explicit('--vault');
+    const match = await matchPlace(vault, { placeId: explicit('--place'), query: arg('--query'), candidatesFile: arg('--candidates') ?? defaultCandidates });
+    await emitFiles(vault, arg('--out'), [['place-match.json', jsonText(match)]]);
+    json(match);
+  } else if (command === 'confirm-place') {
+    const vault = explicit('--vault');
+    const output = arg('--out');
+    if (output) await emitFiles(vault, output, []);
+    const result = await confirmPlace({
+      vault, placeId: explicit('--place'), candidateId: explicit('--candidate'), grants: repeated('--authorize'),
+      query: arg('--query'), candidatesFile: arg('--candidates') ?? defaultCandidates,
+    });
+    const files: Array<[string, string]> = [['place-match.json', jsonText(result.match)]];
+    if (!('unchanged' in result)) files.push(
+      ['change-set.json', jsonText(result.changeSet)], ['receipt.json', jsonText(result.receipt)],
+      ['issue.json', jsonText({ number: result.issue.number, url: result.issue.url, focusState: result.issue.focusState, linear: result.issue.linear })],
+    );
+    await emitFiles(vault, output, files);
+    json(result);
+  } else if (command === 'map') {
+    const vault = explicit('--vault');
+    const map = await buildCollectionMap(vault);
+    await emitFiles(vault, arg('--out'), [['collection-map.json', jsonText(map)], ['collection-map.geojson', jsonText(map.geojson)]]);
+    json(map);
+  } else if (command === 'fragments') {
+    const vault = explicit('--vault');
+    const pack = await buildReferencePack(vault, arg('--pack'));
+    await emitFiles(vault, arg('--out'), [['reference-pack.json', jsonText(pack)]]);
+    json(pack);
+  } else if (command === 'schemas') json({ manifest: manifestSchema, record: recordSchema, captureRequest: captureRequestSchema, changeSet: changeSetSchema, processingReceipt: processingReceiptSchema, queryIndex: queryIndexSchema, backupManifest: backupManifestSchema, placeList: placeListSchema, placeCandidateCatalog: placeCandidateCatalogSchema, placeMatch: placeMatchSchema, collectionMap: collectionMapSchema, fragmentPack: fragmentPackSchema, referencePack: referencePackSchema });
+  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | capture --request FILE --vault PATH --authorize capture [--content DIR] [--out .codex-work/tmp/NAME] | confirm-finance --request FILE --vault PATH --authorize finance-confirm | confirm-place --vault PATH --place ID --candidate ID --authorize place-confirm [--candidates FILE] [--query TEXT] [--out .codex-work/tmp/NAME] | places --vault PATH [--out .codex-work/tmp/NAME] | match-place --vault PATH --place ID [--query TEXT] [--candidates FILE] [--out .codex-work/tmp/NAME] | map --vault PATH [--out .codex-work/tmp/NAME] | fragments --vault PATH [--pack FILE] [--out .codex-work/tmp/NAME] | inbox --vault PATH [--status STATUS] [--out .codex-work/tmp/NAME] | search --vault PATH [--query TEXT] [--tag TAG] [--out .codex-work/tmp/NAME] | life --vault PATH [--kind task|plan|wishlist] [--status STATUS] [--out .codex-work/tmp/NAME] | index --vault PATH [--out .codex-work/tmp/NAME] [--check FILE] | accept --vault PATH [--out .codex-work/tmp/NAME] | backup --vault PATH --out DIR | restore --backup DIR --vault PATH | schemas');
 } catch (e) { json({ error: e instanceof Error ? e.message : 'Unknown error' }); process.exitCode = 1; }
