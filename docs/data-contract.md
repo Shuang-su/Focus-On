@@ -37,3 +37,11 @@ ChangeSet 包含相对数据路径、beforeHash/afterHash 和候选记录。Proc
 `fragmentPack` 是输入。它只按 recordId 和可选标题指向已有收藏或笔记，不提供文件路径。`referencePack` 是输出，摘录来自该记录自己的 Markdown。没有 `--pack` 时，只收录标签恰好为 `design` 的收藏；标签区分大小写，笔记没有标签字段。参考包不写回资料库。
 
 这些命令的 `--vault` 必须出现在命令行上，不读取 `FOCUS_VAULT_PATH`。`--candidates` 和 `--pack` 是数据文件，拒绝 symlink。`--out` 必须位于来源资料库之外。确认写入仍拒绝带有 `github.com` 或 `focus-on-vault` 远端的资料库，并且不执行 push。
+
+## Events
+
+格式版本仍是 1。`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData` 不改变。事件订阅、调度、投递、状态文件、监控、工具目录、插件目录和一次投递结果是 schemaVersion 1 的本地文档。它们不进入数据 snapshot，也不是生活事项或录入回执。
+
+`eventState` 绑定 `vaultId`。换一份 `vaultId` 不同的资料库使用同一 `--state` 会拒绝，并且不覆盖原文件。状态文件里的 `daemon`、`externalDelivery` 和 `pluginActivation` 固定为 disabled。订阅的 sink 只能是 `journal`。选择器只有 `record`、`inbox` 和 `life`。`inbox` 观察录入请求和回执状态，`life` 观察 task、plan、wishlist 的当前状态；两条观察可以同时存在，投递不会把其中一条写成另一条。
+
+投递 id 由 vaultId、订阅 id 和幂等键决定。记录、收件箱和生活事项的幂等键来自当前观察摘要；调度的幂等键来自调度 id 和该次发生时间。已经 delivered 的同一键再次遇到时记为 duplicate，不再次调用处理函数。失败状态是 `retry`，`attempts` 最多 5，下一次时间按 60 秒起、每次翻倍、最长 3600 秒计算。到达 5 次后状态是 `exhausted`，自动投递停止。`redeliver` 仍要 `--authorize events-deliver`，并且订阅和调度都得是 active。地图和 UI 出现在 `pluginCatalog`，`activation` 固定为 disabled。受限工具目录的 `server` 固定为 disabled；参数不能携带 vault、state、命令或插件路径。`focus.capture`、财务确认和地点确认不在这个目录里。

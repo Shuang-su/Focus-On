@@ -337,3 +337,264 @@ export type PlaceMatch = FromSchema<typeof placeMatchSchema>;
 export type CollectionMap = FromSchema<typeof collectionMapSchema>;
 export type FragmentPack = FromSchema<typeof fragmentPackSchema>;
 export type ReferencePack = FromSchema<typeof referencePackSchema>;
+
+const eventId = recordId;
+const idempotencyKey = { type: 'string', pattern: '^(obs|sch):[a-f0-9]{64}$' } as const;
+const eventEffects = {
+  type: 'object', additionalProperties: false,
+  required: ['vaultWrite', 'lifeStatusChanged', 'financeConfirmed', 'externalDelivery'],
+  properties: {
+    vaultWrite: { const: false },
+    lifeStatusChanged: { const: false },
+    financeConfirmed: { const: false },
+    externalDelivery: { const: false },
+  },
+} as const;
+const eventSelectorSchema = {
+  oneOf: [
+    { type: 'object', additionalProperties: false, required: ['type', 'recordId'], properties: { type: { const: 'record' }, recordId } },
+    { type: 'object', additionalProperties: false, required: ['type'], properties: { type: { const: 'inbox' } } },
+    { type: 'object', additionalProperties: false, required: ['type'], properties: { type: { const: 'life' } } },
+  ],
+} as const;
+const eventSinkSchema = {
+  type: 'object', additionalProperties: false, required: ['type'],
+  properties: { type: { const: 'journal' } },
+} as const;
+export const eventSubscriptionSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-subscription-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'id', 'vaultId', 'status', 'createdAt', 'selector', 'sink'],
+  properties: {
+    schemaVersion: { const: 1 }, id: eventId, vaultId: recordId,
+    status: { enum: ['active', 'paused'] },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    selector: eventSelectorSchema,
+    sink: eventSinkSchema,
+    cursor: idempotencyKey,
+  },
+} as const;
+export const eventScheduleSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-schedule-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'id', 'vaultId', 'status', 'subscriptionId', 'intervalSeconds', 'startAt', 'nextDueAt', 'createdAt'],
+  properties: {
+    schemaVersion: { const: 1 }, id: eventId, vaultId: recordId,
+    status: { enum: ['active', 'paused'] },
+    subscriptionId: eventId,
+    intervalSeconds: { type: 'integer', minimum: 60, maximum: 31622400 },
+    startAt: { type: 'string', format: 'date-time' },
+    nextDueAt: { type: 'string', format: 'date-time' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+  },
+} as const;
+const inboxObservationSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['requestId', 'inputVersion', 'status', 'inputHash'],
+  properties: {
+    requestId: recordId, inputVersion: { type: 'integer', minimum: 1 },
+    status: { enum: ['planned', 'awaiting_merge', 'stored', 'needs_input', 'failed', 'saved'] },
+    inputHash: hash, verified: { type: 'boolean' },
+  },
+} as const;
+const lifeObservationSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['id', 'kind', 'status', 'revision', 'title'],
+  properties: {
+    id: recordId, kind: { enum: ['task', 'plan', 'wishlist'] },
+    status: { type: 'string', minLength: 1, maxLength: 100 },
+    revision: { type: 'integer', minimum: 1 },
+    title: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const;
+const eventObservationSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['sourceSnapshot', 'key'],
+  properties: {
+    sourceSnapshot: hash, key: idempotencyKey, changed: { type: 'boolean' }, missing: { const: true },
+    record: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'kind', 'revision', 'recordHash', 'title'],
+      properties: {
+        id: recordId,
+        kind: { enum: ['collection', 'note', 'task', 'plan', 'wishlist', 'finance_draft', 'entity', 'budget', 'subscription', 'attachment'] },
+        revision: { type: 'integer', minimum: 1 }, recordHash: hash,
+        title: { type: 'string', minLength: 1, maxLength: 500 },
+        status: { type: 'string', minLength: 1, maxLength: 100 },
+      },
+    },
+    inbox: { type: 'array', maxItems: 100, items: inboxObservationSchema },
+    inboxCount: { type: 'integer', minimum: 0, maximum: 100 },
+    life: { type: 'array', maxItems: 100, items: lifeObservationSchema },
+    lifeCount: { type: 'integer', minimum: 0, maximum: 100 },
+    schedule: {
+      type: 'object', additionalProperties: false, required: ['id', 'occurrence'],
+      properties: { id: eventId, occurrence: { type: 'string', format: 'date-time' } },
+    },
+  },
+} as const;
+export const eventDeliverySchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-delivery-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'id', 'vaultId', 'subscriptionId', 'idempotencyKey', 'kind', 'status', 'attempts', 'maxAttempts', 'createdAt', 'updatedAt', 'observation', 'effects'],
+  properties: {
+    schemaVersion: { const: 1 },
+    id: { type: 'string', pattern: '^dlv_[a-f0-9]{24}$' },
+    vaultId: recordId, subscriptionId: eventId, scheduleId: eventId,
+    idempotencyKey, kind: { enum: ['record.observed', 'inbox.observed', 'life.observed', 'schedule.due'] },
+    status: { enum: ['pending', 'delivered', 'retry', 'exhausted'] },
+    attempts: { type: 'integer', minimum: 0, maximum: 5 },
+    maxAttempts: { const: 5 },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    nextAttemptAt: { type: 'string', format: 'date-time' },
+    deliveredAt: { type: 'string', format: 'date-time' },
+    lastError: { type: 'string', minLength: 1, maxLength: 300 },
+    observation: eventObservationSchema,
+    effects: eventEffects,
+  },
+  allOf: [
+    { if: { properties: { status: { const: 'retry' } }, required: ['status'] }, then: { required: ['nextAttemptAt', 'lastError'] } },
+    { if: { properties: { status: { const: 'exhausted' } }, required: ['status'] }, then: { required: ['lastError'] } },
+    { if: { properties: { status: { const: 'delivered' } }, required: ['status'] }, then: { required: ['deliveredAt'] } },
+    { if: { properties: { kind: { const: 'schedule.due' } }, required: ['kind'] }, then: { required: ['scheduleId'] } },
+  ],
+} as const;
+export const eventStateSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-state-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'daemon', 'externalDelivery', 'pluginActivation', 'updatedAt', 'subscriptions', 'schedules', 'deliveries'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'eventState' }, vaultId: recordId,
+    daemon: { const: 'disabled' }, externalDelivery: { const: 'disabled' }, pluginActivation: { const: 'disabled' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    subscriptions: { type: 'array', maxItems: 50, items: eventSubscriptionSchema },
+    schedules: { type: 'array', maxItems: 50, items: eventScheduleSchema },
+    deliveries: { type: 'array', maxItems: 100, items: eventDeliverySchema },
+  },
+} as const;
+const eventFailureSchema = {
+  type: 'object', additionalProperties: false,
+  required: ['id', 'subscriptionId', 'kind', 'status', 'attempts', 'maxAttempts', 'lastError'],
+  properties: {
+    id: { type: 'string', pattern: '^dlv_[a-f0-9]{24}$' },
+    subscriptionId: eventId, scheduleId: eventId,
+    kind: { enum: ['record.observed', 'inbox.observed', 'life.observed', 'schedule.due'] },
+    status: { enum: ['retry', 'exhausted'] },
+    attempts: { type: 'integer', minimum: 1, maximum: 5 },
+    maxAttempts: { const: 5 },
+    nextAttemptAt: { type: 'string', format: 'date-time' },
+    lastError: { type: 'string', minLength: 1, maxLength: 300 },
+  },
+} as const;
+export const eventMonitorSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-monitor-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'sourceSnapshot', 'daemon', 'externalDelivery', 'pluginActivation', 'vaultWrites', 'state', 'counts', 'failures', 'subscriptions', 'schedules', 'deliveries'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'eventMonitor' }, vaultId: recordId, sourceSnapshot: hash,
+    daemon: { const: 'disabled' }, externalDelivery: { const: 'disabled' }, pluginActivation: { const: 'disabled' },
+    vaultWrites: { const: false }, state: { enum: ['absent', 'present'] },
+    updatedAt: { type: 'string', format: 'date-time' },
+    counts: {
+      type: 'object', additionalProperties: false,
+      required: ['subscriptions', 'schedules', 'pending', 'delivered', 'retry', 'exhausted'],
+      properties: {
+        subscriptions: { type: 'integer', minimum: 0, maximum: 50 },
+        schedules: { type: 'integer', minimum: 0, maximum: 50 },
+        pending: { type: 'integer', minimum: 0, maximum: 100 },
+        delivered: { type: 'integer', minimum: 0, maximum: 100 },
+        retry: { type: 'integer', minimum: 0, maximum: 100 },
+        exhausted: { type: 'integer', minimum: 0, maximum: 100 },
+      },
+    },
+    failures: { type: 'array', maxItems: 100, items: eventFailureSchema },
+    subscriptions: { type: 'array', maxItems: 50, items: eventSubscriptionSchema },
+    schedules: { type: 'array', maxItems: 50, items: eventScheduleSchema },
+    deliveries: { type: 'array', maxItems: 100, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'subscriptionId', 'idempotencyKey', 'kind', 'status', 'attempts', 'maxAttempts'],
+      properties: {
+        id: { type: 'string', pattern: '^dlv_[a-f0-9]{24}$' },
+        subscriptionId: eventId, scheduleId: eventId, idempotencyKey,
+        kind: { enum: ['record.observed', 'inbox.observed', 'life.observed', 'schedule.due'] },
+        status: { enum: ['pending', 'delivered', 'retry', 'exhausted'] },
+        attempts: { type: 'integer', minimum: 0, maximum: 5 }, maxAttempts: { const: 5 },
+        nextAttemptAt: { type: 'string', format: 'date-time' },
+        lastError: { type: 'string', minLength: 1, maxLength: 300 },
+      },
+    } },
+  },
+} as const;
+export const eventToolCatalogSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-tool-catalog-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'transport', 'server', 'tools'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'eventToolCatalog' },
+    transport: { const: 'local' }, server: { const: 'disabled' },
+    tools: { type: 'array', minItems: 1, maxItems: 30, items: {
+      type: 'object', additionalProperties: false,
+      required: ['name', 'mutates', 'grant'],
+      properties: {
+        name: { type: 'string', pattern: '^focus\\.[a-z_]{2,40}$' },
+        mutates: { type: 'boolean' },
+        grant: { anyOf: [{ type: 'null' }, { enum: ['events-subscribe', 'events-schedule', 'events-deliver'] }] },
+      },
+    } },
+  },
+} as const;
+export const pluginCatalogSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/plugin-catalog-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'activation', 'interfaces'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'pluginCatalog' }, activation: { const: 'disabled' },
+    interfaces: { type: 'array', maxItems: 10, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'kind', 'activation', 'document'],
+      properties: {
+        id: { enum: ['map', 'ui'] }, kind: { const: 'view' }, activation: { const: 'disabled' },
+        document: { enum: ['collectionMap', 'referencePack'] },
+      },
+    } },
+  },
+} as const;
+export const eventDeliveryRunSchema = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://focus-on.example/schemas/event-delivery-run-v1',
+  type: 'object', additionalProperties: false,
+  required: ['schemaVersion', 'kind', 'vaultId', 'now', 'daemon', 'externalDelivery', 'attempted', 'delivered', 'retry', 'exhausted', 'duplicates', 'deliveries'],
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'eventDeliveryRun' }, vaultId: recordId,
+    now: { type: 'string', format: 'date-time' }, daemon: { const: 'disabled' }, externalDelivery: { const: 'disabled' },
+    attempted: { type: 'integer', minimum: 0 }, delivered: { type: 'integer', minimum: 0 },
+    retry: { type: 'integer', minimum: 0 }, exhausted: { type: 'integer', minimum: 0 }, duplicates: { type: 'integer', minimum: 0 },
+    deliveries: { type: 'array', maxItems: 100, items: {
+      type: 'object', additionalProperties: false,
+      required: ['id', 'status', 'duplicate', 'attempts'],
+      properties: {
+        id: { type: 'string', pattern: '^dlv_[a-f0-9]{24}$' },
+        status: { enum: ['pending', 'delivered', 'retry', 'exhausted'] },
+        duplicate: { type: 'boolean' }, attempts: { type: 'integer', minimum: 0, maximum: 5 },
+      },
+    } },
+  },
+} as const;
+export type EventSubscription = FromSchema<typeof eventSubscriptionSchema>;
+export type EventSchedule = FromSchema<typeof eventScheduleSchema>;
+export type EventDelivery = FromSchema<typeof eventDeliverySchema>;
+export type EventState = FromSchema<typeof eventStateSchema>;
+export type EventMonitor = FromSchema<typeof eventMonitorSchema>;
+export type EventToolCatalog = FromSchema<typeof eventToolCatalogSchema>;
+export type PluginCatalog = FromSchema<typeof pluginCatalogSchema>;
+export type EventDeliveryRun = FromSchema<typeof eventDeliveryRunSchema>;

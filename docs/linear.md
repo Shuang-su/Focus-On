@@ -42,3 +42,5 @@ GitHub 原生集成允许多个仓库向同一 Team 单向同步，但每个 Tea
 日常查询不改变这张表。`inbox`、`search`、`life`、`index` 和 `accept` 只读 vault 文件，不回写 FOCUS 状态，也不调用 Linear。录入回执里的 stored 和生活事项里的 done 仍然是两套状态。
 
 `places`、`match-place`、`map` 和 `fragments` 同样不回写 FOCUS 状态。`confirm-place` 复用本地录入闭环，因此会在本地 Issue 上走同一张状态表，并把 `linear.sync` 保持为 disabled。它不调用 Linear。地点的 confirmed 写在地点记录里，不改变待办、预购或财务状态。
+
+`events` 不回写 FOCUS 状态，也不调用 Linear。录入回执里的 stored 和生活事项里的 done 仍然是两套状态；事件日志可以分别观察它们，但投递不会把其中一套写成另一套。
