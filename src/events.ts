@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { eventsDeliverGrant, eventsScheduleGrant, eventsSubscribeGrant, assertEventsAuthorized, assertEventsRead } from './authorization.js';
 import type { EventDelivery, EventDeliveryRun, EventMonitor, EventSchedule, EventState, EventSubscription, EventToolCatalog, PluginCatalog, RecordData } from './contracts.js';
 import { buildCollectionMap, buildReferencePack, listPlaces, matchPlace } from './context.js';
@@ -156,6 +157,74 @@ async function writeState(directory: string, state: EventState): Promise<void> {
   state.schedules = next.schedules;
   state.deliveries = next.deliveries;
 }
+const journalDepth = new Map<string, number>();
+const lockFile = (directory: string) => path.join(directory, '.state.lock');
+const waitingFile = (directory: string) => path.join(directory, '.state.lock.waiting-' + process.pid);
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+async function lockOwner(file: string): Promise<number | undefined> {
+  try {
+    const pid = Number((await readFile(file, 'utf8')).trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+}
+async function acquireJournalLock(directory: string): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const target = lockFile(directory);
+  const waiting = waitingFile(directory);
+  await writeFile(waiting, String(process.pid), { flag: constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode: 0o600 });
+  try {
+    for (;;) {
+      try {
+        const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        try { await handle.writeFile(String(process.pid)); }
+        finally { await handle.close(); }
+        if (await lockOwner(target) === process.pid) return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        let stat;
+        try { stat = await lstat(target); }
+        catch (statError) { if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue; throw statError; }
+        if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Event journal lock must be a regular file');
+        const owner = await lockOwner(target);
+        const fresh = Date.now() - stat.mtimeMs < 1000;
+        if (owner !== undefined && processAlive(owner) || owner === undefined && fresh) {
+          await delay(20);
+          continue;
+        }
+        await unlink(target).catch(unlinkError => { if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkError; });
+      }
+    }
+  } finally {
+    await unlink(waiting).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+  }
+}
+async function releaseJournalLock(directory: string): Promise<void> {
+  const target = lockFile(directory);
+  if (await lockOwner(target) === process.pid) await unlink(target).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+}
+async function withJournalLock<T>(directory: string, body: () => Promise<T>): Promise<T> {
+  const depth = journalDepth.get(directory) ?? 0;
+  if (depth > 0) {
+    journalDepth.set(directory, depth + 1);
+    try { return await body(); }
+    finally {
+      const next = (journalDepth.get(directory) ?? 1) - 1;
+      if (next <= 0) journalDepth.delete(directory);
+      else journalDepth.set(directory, next);
+    }
+  }
+  await acquireJournalLock(directory);
+  journalDepth.set(directory, 1);
+  try { return await body(); }
+  finally {
+    journalDepth.delete(directory);
+    await releaseJournalLock(directory);
+  }
+}
 function selectorOf(type: string, recordId: string | undefined): EventSubscription['selector'] {
   if (type === 'record') {
     if (!recordId || !idPattern.test(recordId)) throw new Error('--record is required for a record subscription');
@@ -167,13 +236,6 @@ function selectorOf(type: string, recordId: string | undefined): EventSubscripti
 }
 function sameSelector(left: EventSubscription['selector'], right: EventSubscription['selector']): boolean {
   return canonical(left) === canonical(right);
-}
-async function prepare(location: EventLocation, now: string): Promise<{ directory: string; vault: VaultSnapshot; state: EventState | undefined }> {
-  const clock = eventNow(now);
-  const directory = await resolveEventDirectory(location.project, location.vault, location.state);
-  const vault = await openVault(location.vault);
-  const state = await loadState(directory, vault.manifest.vaultId);
-  return { directory, vault, state: state ? { ...state, updatedAt: state.updatedAt } : undefined };
 }
 function materialKey(parts: unknown): string {
   return 'obs:' + digest(canonical(parts));
@@ -288,6 +350,9 @@ export async function subscribeEvents(input: EventLocation & Clock & { grants: r
   const id = requireId(input.id, 'Subscription id');
   const selector = selectorOf(input.selector, input.recordId);
   const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  const preview = await openVault(input.vault);
+  if (selector.type === 'record' && !preview.records.has(selector.recordId)) throw new Error('Subscribed record does not exist');
+  return withJournalLock(directory, async () => {
   const vault = await openVault(input.vault);
   if (selector.type === 'record' && !vault.records.has(selector.recordId)) throw new Error('Subscribed record does not exist');
   const loaded = await loadState(directory, vault.manifest.vaultId);
@@ -307,12 +372,16 @@ export async function subscribeEvents(input: EventLocation & Clock & { grants: r
   state.updatedAt = now;
   await writeState(directory, state);
   return { subscription, created: true };
+  });
 }
 export async function setSubscriptionStatus(input: EventLocation & Clock & { grants: readonly string[]; id: string; status: 'active' | 'paused' }): Promise<{ subscription: EventSubscription; changed: boolean }> {
   assertEventsAuthorized(input.grants, eventsSubscribeGrant);
   const now = eventNow(input.now);
   const id = requireId(input.id, 'Subscription id');
-  const { directory, vault, state } = await prepare(input, now);
+  const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  return withJournalLock(directory, async () => {
+  const vault = await openVault(input.vault);
+  const state = await loadState(directory, vault.manifest.vaultId);
   if (!state) throw new Error('Unknown event subscription');
   const subscription = state.subscriptions.find(item => item.id === id);
   if (!subscription || subscription.vaultId !== vault.manifest.vaultId) throw new Error('Unknown event subscription');
@@ -322,6 +391,7 @@ export async function setSubscriptionStatus(input: EventLocation & Clock & { gra
   state.updatedAt = now;
   await writeState(directory, state);
   return { subscription, changed: true };
+  });
 }
 export async function scheduleEvents(input: EventLocation & Clock & { grants: readonly string[]; id: string; subscriptionId: string; every: number; start: string }): Promise<{ schedule: EventSchedule; created: boolean }> {
   assertEventsAuthorized(input.grants, eventsScheduleGrant);
@@ -331,6 +401,8 @@ export async function scheduleEvents(input: EventLocation & Clock & { grants: re
   if (!Number.isSafeInteger(input.every) || input.every < 60 || input.every > 31622400) throw new Error('--every must be between 60 and 31622400 seconds');
   const start = eventNow(input.start);
   const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  await openVault(input.vault);
+  return withJournalLock(directory, async () => {
   const vault = await openVault(input.vault);
   const loaded = await loadState(directory, vault.manifest.vaultId);
   if (!loaded) throw new Error('Unknown event subscription');
@@ -351,12 +423,16 @@ export async function scheduleEvents(input: EventLocation & Clock & { grants: re
   loaded.updatedAt = now;
   await writeState(directory, loaded);
   return { schedule, created: true };
+  });
 }
 export async function setScheduleStatus(input: EventLocation & Clock & { grants: readonly string[]; id: string; status: 'active' | 'paused' }): Promise<{ schedule: EventSchedule; changed: boolean }> {
   assertEventsAuthorized(input.grants, eventsScheduleGrant);
   const now = eventNow(input.now);
   const id = requireId(input.id, 'Schedule id');
-  const { directory, state } = await prepare(input, now);
+  const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  return withJournalLock(directory, async () => {
+  const vault = await openVault(input.vault);
+  const state = await loadState(directory, vault.manifest.vaultId);
   if (!state) throw new Error('Unknown event schedule');
   const schedule = state.schedules.find(item => item.id === id);
   if (!schedule) throw new Error('Unknown event schedule');
@@ -366,11 +442,14 @@ export async function setScheduleStatus(input: EventLocation & Clock & { grants:
   state.updatedAt = now;
   await writeState(directory, state);
   return { schedule, changed: true };
+  });
 }
 export async function deliverEvents(input: EventLocation & Clock & { grants: readonly string[]; handler?: EventHandler }): Promise<EventDeliveryRun> {
   assertEventsAuthorized(input.grants, eventsDeliverGrant);
   const now = eventNow(input.now);
   const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  await openVault(input.vault);
+  return withJournalLock(directory, async () => {
   const vault = await openVault(input.vault);
   const loaded = await loadState(directory, vault.manifest.vaultId);
   const state = loaded ?? emptyState(vault.manifest.vaultId, now);
@@ -459,11 +538,14 @@ export async function deliverEvents(input: EventLocation & Clock & { grants: rea
     await writeState(directory, state);
   }
   return runFrom(vault.manifest.vaultId, now, notes);
+  });
 }
 export async function redeliverEvent(input: EventLocation & Clock & { grants: readonly string[]; deliveryId: string; handler?: EventHandler }): Promise<{ delivery: EventDelivery; duplicate: boolean }> {
   assertEventsAuthorized(input.grants, eventsDeliverGrant);
   const now = eventNow(input.now);
   const directory = await resolveEventDirectory(input.project, input.vault, input.state);
+  await openVault(input.vault);
+  return withJournalLock(directory, async () => {
   const vault = await openVault(input.vault);
   const state = await loadState(directory, vault.manifest.vaultId);
   if (!state) throw new Error('Unknown event delivery');
@@ -492,6 +574,7 @@ export async function redeliverEvent(input: EventLocation & Clock & { grants: re
   state.updatedAt = now;
   await writeState(directory, state);
   return { delivery, duplicate: false };
+  });
 }
 export async function eventStatus(input: EventLocation & { grants: readonly string[] }): Promise<EventMonitor> {
   assertEventsRead(input.grants);

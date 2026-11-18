@@ -73,6 +73,8 @@ bash scripts/bootstrap.sh focus events deliver --vault examples/vault --state .c
 bash scripts/bootstrap.sh focus events status --vault examples/vault --state .codex-work/tmp/events
 ```
 
+同一 `--state` 上的订阅、调度和投递会排队。投递在处理函数返回并写完日志之前一直占着锁，后到的命令不会用旧快照覆盖新记录。
+
 `subscribe` 没有 `--authorize events-subscribe` 时拒绝写入。`schedule` 需要 `--authorize events-schedule`，`deliver` 和 `redeliver` 需要 `--authorize events-deliver`。这三个授权不能代替 `capture` 或 `place-confirm`。同一观察键或同一调度发生时间只保留一条投递；再次执行会标成 duplicate，不会另写一条。失败后按 60 秒起、每次翻倍、最长 3600 秒的间隔重试，最多 5 次。耗尽后状态留在日志里，自动投递不再调用处理函数；只有再次授权的 `redeliver` 才会重新尝试。一次调度补跑最多 8 个到期点。日志最多 50 个订阅、50 个调度和 100 条投递。事件日志不在 `backup` 里，恢复资料库不会带回 `--state`。
 
 公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引、备份清单、地点列表、地点匹配、收藏地图、参考包、事件状态和插件目录是从这些记录或本地日志派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。

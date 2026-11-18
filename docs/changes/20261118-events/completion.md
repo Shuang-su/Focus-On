@@ -20,7 +20,7 @@
 
 ## 日志、重试与观察
 
-状态文件是 `--state/state.json`。它记录 vaultId、订阅、调度和投递，并固定 daemon、externalDelivery、pluginActivation 为 disabled。订阅只能写入 journal。观察分三种：一条记录、收件箱、生活事项。收件箱观察保留回执状态，生活事项观察保留 task、plan、wishlist 的当前状态。投递结果里的 vaultWrite、lifeStatusChanged、financeConfirmed 和 externalDelivery 都固定为 false。
+状态文件是 `--state/state.json`。它记录 vaultId、订阅、调度和投递，并固定 daemon、externalDelivery、pluginActivation 为 disabled。读改写期间持有 `--state/.state.lock`，投递处理函数返回后才释放。另一个进程在锁释放后才读取日志。锁文件记下 pid，持有进程退出后可以被下一次获取删掉。订阅只能写入 journal。观察分三种：一条记录、收件箱、生活事项。收件箱观察保留回执状态，生活事项观察保留 task、plan、wishlist 的当前状态。投递结果里的 vaultWrite、lifeStatusChanged、financeConfirmed 和 externalDelivery 都固定为 false。
 
 幂等键相同的投递只保留一条。处理成功后再次执行标为 duplicate。失败进入 retry，最多 5 次；间隔从 60 秒翻倍，最长 3600 秒。第 5 次失败后是 exhausted，自动轮次不再调用处理函数。`redeliver` 在订阅和调度仍为 active 时再试一次。暂停的订阅不会产生新观察，也不会自动重试。调度一次最多补 8 个到期点。日志上限是 50 个订阅、50 个调度、100 条投递；满了就拒绝新投递，不删旧记录。
 
@@ -38,7 +38,7 @@ bash scripts/bootstrap.sh focus validate --vault examples/vault
 bash scripts/bootstrap.sh focus accept --vault examples/vault
 ```
 
-`check` 包含构建、61 项测试、示例资料库校验和 `accept`。合成示例 snapshot 仍是 `801caa0c67dc26ccaf061b08fcfa75dd328d90b67911af5cf55d921b2e52cdce`。查询索引摘要仍是 `938a46c046c50ba759d603c0f5119ec30b95d1cf1b4e15840fafbcabde7f2676`。测试使用 `examples/vault` 的临时副本、临时 git 资料库和临时 `--state`。覆盖进程重启后的订阅、重复投递、失败退避、耗尽后的显式重投、授权、`FOCUS_VAULT_PATH`、输出路径、symlink 和跨 vaultId 隔离。Git 推送、`https://github.com/Shuang-su/focus-on-vault` 在执行前被拒绝。工具调用没有访问网络地理编码，也没有启用插件。
+`check` 包含构建、62 项测试、示例资料库校验和 `accept`。合成示例 snapshot 仍是 `801caa0c67dc26ccaf061b08fcfa75dd328d90b67911af5cf55d921b2e52cdce`。查询索引摘要仍是 `938a46c046c50ba759d603c0f5119ec30b95d1cf1b4e15840fafbcabde7f2676`。测试使用 `examples/vault` 的临时副本、临时 git 资料库和临时 `--state`。覆盖进程重启后的订阅、重复投递、失败退避、耗尽后的显式重投、授权、`FOCUS_VAULT_PATH`、输出路径、symlink 和跨 vaultId 隔离。Git 推送、`https://github.com/Shuang-su/focus-on-vault` 在执行前被拒绝。工具调用没有访问网络地理编码，也没有启用插件。
 
 ## 验收缺口
 

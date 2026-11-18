@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { cp, lstat, mkdir, mkdtemp, readFile, symlink, unlink, writeFile } from 'node:fs/promises';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { CaptureRequest, EventDelivery, EventState } from '../src/contracts.js';
 import { confirmPlace } from '../src/context.js';
 import { callRestrictedTool, deliverEvents, eventPlugins, eventStatus, eventToolCatalog, redeliverEvent, scheduleEvents, setScheduleStatus, setSubscriptionStatus, subscribeEvents } from '../src/events.js';
@@ -419,6 +420,48 @@ test('restricted tool calls reject path overrides, plugins, and unlisted tools',
   assert.equal((subscribed.result as { created: boolean }).created, true);
   assert.equal((await readVault(vault)).snapshot, before);
   assert.equal(JSON.stringify(await readState(state)).includes('$(rm -rf /)'), false);
+});
+
+test('a delivery holds the journal lock until its write is finished', async () => {
+  const vault = await sandbox('lock');
+  const state = await stateDir('lock-state');
+  await subscribeEvents({ ...location(vault, state), grants: ['events-subscribe'], now: t0, id: 'sub_task', selector: 'record', recordId: 'task_sample' });
+  const moduleUrl = pathToFileURL(path.resolve('.codex-work/build/src/events.js')).href;
+  const script = [
+    `import { subscribeEvents } from ${JSON.stringify(moduleUrl)};`,
+    `await subscribeEvents(${JSON.stringify({ ...location(vault, state), grants: ['events-subscribe'], now: plus(1), id: 'sub_life', selector: 'life' })});`,
+  ].join('\n');
+  let stderr = '';
+  let child: ReturnType<typeof spawn> | undefined;
+  await deliverEvents({
+    ...location(vault, state), grants: ['events-deliver'], now: t0, handler: async () => {
+      const started = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+      child = started;
+      started.stderr?.setEncoding('utf8');
+      started.stderr?.on('data', chunk => { stderr += chunk; });
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (started.exitCode !== null) throw new Error('subscribe finished while delivery held the journal: ' + stderr);
+        const names = await readdir(state);
+        if (names.some(name => name.startsWith('.state.lock.waiting-'))) return;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      throw new Error('subscribe did not wait for the journal lock: ' + stderr);
+    },
+  });
+  const finished = child;
+  if (!finished) throw new Error('delivery handler did not start');
+  const exit = await new Promise<number>((resolve, reject) => {
+    if (finished.exitCode !== null) resolve(finished.exitCode);
+    else finished.once('exit', code => resolve(code ?? 1));
+    finished.once('error', reject);
+  });
+  assert.equal(exit, 0, stderr);
+  const saved = await readState(state);
+  assert.deepEqual(saved.subscriptions.map(item => item.id), ['sub_life', 'sub_task']);
+  assert.equal(saved.deliveries.length, 1);
+  assert.equal(saved.deliveries[0]!.status, 'delivered');
+  assert.equal(saved.deliveries[0]!.subscriptionId, 'sub_task');
 });
 
 test('event commands require --vault and keep derived output outside it', async () => {
