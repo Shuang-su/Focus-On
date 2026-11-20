@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
-import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, type RecordData, type VaultManifest, type CaptureRequest, type ProcessingReceipt } from './contracts.js';
+import { manifestSchema, recordSchema, captureRequestSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, eventSubscriptionSchema, eventScheduleSchema, eventDeliverySchema, eventStateSchema, eventMonitorSchema, eventToolCatalogSchema, pluginCatalogSchema, eventDeliveryRunSchema, type RecordData, type VaultManifest, type CaptureRequest, type ProcessingReceipt } from './contracts.js';
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 (addFormats as unknown as (instance: Ajv2020) => void)(ajv);
@@ -20,6 +20,14 @@ export const validatePlaceMatch = ajv.compile(placeMatchSchema);
 export const validateCollectionMap = ajv.compile(collectionMapSchema);
 export const validateFragmentPack = ajv.compile(fragmentPackSchema);
 export const validateReferencePack = ajv.compile(referencePackSchema);
+export const validateEventSubscription = ajv.compile(eventSubscriptionSchema);
+export const validateEventSchedule = ajv.compile(eventScheduleSchema);
+export const validateEventDelivery = ajv.compile(eventDeliverySchema);
+export const validateEventState = ajv.compile(eventStateSchema);
+export const validateEventMonitor = ajv.compile(eventMonitorSchema);
+export const validateEventToolCatalog = ajv.compile(eventToolCatalogSchema);
+export const validatePluginCatalog = ajv.compile(pluginCatalogSchema);
+export const validateEventDeliveryRun = ajv.compile(eventDeliveryRunSchema);
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
   if (value && typeof value === 'object') return '{' + Object.entries(value).sort(([a], [b]) => a.localeCompare(b, 'en')).map(([k, v]) => JSON.stringify(k) + ':' + canonical(v)).join(',') + '}';

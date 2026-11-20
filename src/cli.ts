@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { refuseFinanceConfirmation } from './authorization.js';
 import { digest, readVault } from './vault.js';
 import { planChanges } from './planner.js';
-import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, type ChangeSet } from './contracts.js';
+import { captureRequestSchema, manifestSchema, recordSchema, changeSetSchema, processingReceiptSchema, queryIndexSchema, backupManifestSchema, placeListSchema, placeCandidateCatalogSchema, placeMatchSchema, collectionMapSchema, fragmentPackSchema, referencePackSchema, eventSubscriptionSchema, eventScheduleSchema, eventDeliverySchema, eventStateSchema, eventMonitorSchema, eventToolCatalogSchema, pluginCatalogSchema, eventDeliveryRunSchema, type ChangeSet } from './contracts.js';
 import { assertOutputOutsideVault, outputDirectory, writeOutput } from './output.js';
 import { captureChanges, readContentDirectory } from './writer.js';
 import { acceptVault, assertSavedIndex, buildQueryIndex, indexDigest, listInbox, listLife, searchCollections } from './query.js';
 import { backupVault, restoreVault } from './backup.js';
 import { buildCollectionMap, buildReferencePack, confirmPlace, listPlaces, matchPlace } from './context.js';
+import { callRestrictedTool, deliverEvents, eventNow, eventPlugins, eventStatus, eventToolCatalog, parseToolArgs, redeliverEvent, requireInteger, scheduleEvents, setScheduleStatus, setSubscriptionStatus, subscribeEvents } from './events.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const [command, ...args] = process.argv.slice(2);
@@ -25,6 +26,11 @@ const repeated = (flag: string) => args.flatMap((value, index) => value === flag
 const json = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const jsonText = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
 const defaultCandidates = path.join(root, 'examples/context/place-candidates.json');
+async function emitProject(commandOut: string | undefined, files: ReadonlyArray<[string, string]>): Promise<void> {
+  if (!commandOut) return;
+  const destination = await outputDirectory(root, commandOut);
+  for (const [filename, text] of files) await writeOutput(destination, filename, text);
+}
 async function emitFiles(vault: string, commandOut: string | undefined, files: ReadonlyArray<[string, string]>): Promise<void> {
   if (!commandOut) return;
   await assertOutputOutsideVault(vault, commandOut);
@@ -155,6 +161,58 @@ try {
     const pack = await buildReferencePack(vault, arg('--pack'));
     await emitFiles(vault, arg('--out'), [['reference-pack.json', jsonText(pack)]]);
     json(pack);
-  } else if (command === 'schemas') json({ manifest: manifestSchema, record: recordSchema, captureRequest: captureRequestSchema, changeSet: changeSetSchema, processingReceipt: processingReceiptSchema, queryIndex: queryIndexSchema, backupManifest: backupManifestSchema, placeList: placeListSchema, placeCandidateCatalog: placeCandidateCatalogSchema, placeMatch: placeMatchSchema, collectionMap: collectionMapSchema, fragmentPack: fragmentPackSchema, referencePack: referencePackSchema });
-  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | capture --request FILE --vault PATH --authorize capture [--content DIR] [--out .codex-work/tmp/NAME] | confirm-finance --request FILE --vault PATH --authorize finance-confirm | confirm-place --vault PATH --place ID --candidate ID --authorize place-confirm [--candidates FILE] [--query TEXT] [--out .codex-work/tmp/NAME] | places --vault PATH [--out .codex-work/tmp/NAME] | match-place --vault PATH --place ID [--query TEXT] [--candidates FILE] [--out .codex-work/tmp/NAME] | map --vault PATH [--out .codex-work/tmp/NAME] | fragments --vault PATH [--pack FILE] [--out .codex-work/tmp/NAME] | inbox --vault PATH [--status STATUS] [--out .codex-work/tmp/NAME] | search --vault PATH [--query TEXT] [--tag TAG] [--out .codex-work/tmp/NAME] | life --vault PATH [--kind task|plan|wishlist] [--status STATUS] [--out .codex-work/tmp/NAME] | index --vault PATH [--out .codex-work/tmp/NAME] [--check FILE] | accept --vault PATH [--out .codex-work/tmp/NAME] | backup --vault PATH --out DIR | restore --backup DIR --vault PATH | schemas');
+  } else if (command === 'events') {
+    const sub = args.find(value => !value.startsWith('--'));
+    const now = eventNow(arg('--now') ?? new Date().toISOString());
+    if (sub === 'tools') {
+      const tools = eventToolCatalog();
+      await emitProject(arg('--out'), [['event-tools.json', jsonText(tools)]]);
+      json(tools);
+    } else if (sub === 'plugins') {
+      const plugins = eventPlugins();
+      await emitProject(arg('--out'), [['event-plugins.json', jsonText(plugins)]]);
+      json(plugins);
+    } else if (sub === 'subscribe') {
+      const vault = explicit('--vault');
+      const result = await subscribeEvents({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now, id: explicit('--id'), selector: explicit('--selector'), recordId: arg('--record') });
+      await emitFiles(vault, arg('--out'), [['event-subscription.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'pause-subscription' || sub === 'resume-subscription') {
+      const vault = explicit('--vault');
+      const result = await setSubscriptionStatus({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now, id: explicit('--id'), status: sub === 'pause-subscription' ? 'paused' : 'active' });
+      await emitFiles(vault, arg('--out'), [['event-subscription.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'schedule') {
+      const vault = explicit('--vault');
+      const result = await scheduleEvents({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now, id: explicit('--id'), subscriptionId: explicit('--subscription'), every: requireInteger('--every', arg('--every')), start: explicit('--start') });
+      await emitFiles(vault, arg('--out'), [['event-schedule.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'pause-schedule' || sub === 'resume-schedule') {
+      const vault = explicit('--vault');
+      const result = await setScheduleStatus({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now, id: explicit('--id'), status: sub === 'pause-schedule' ? 'paused' : 'active' });
+      await emitFiles(vault, arg('--out'), [['event-schedule.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'deliver') {
+      const vault = explicit('--vault');
+      const result = await deliverEvents({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now });
+      await emitFiles(vault, arg('--out'), [['event-delivery-run.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'redeliver') {
+      const vault = explicit('--vault');
+      const result = await redeliverEvent({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize'), now, deliveryId: explicit('--delivery') });
+      await emitFiles(vault, arg('--out'), [['event-redelivery.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'status') {
+      const vault = explicit('--vault');
+      const result = await eventStatus({ project: root, vault, state: explicit('--state'), grants: repeated('--authorize') });
+      await emitFiles(vault, arg('--out'), [['event-monitor.json', jsonText(result)]]);
+      json(result);
+    } else if (sub === 'call') {
+      const vault = explicit('--vault');
+      const result = await callRestrictedTool({ project: root, vault, state: arg('--state'), grants: repeated('--authorize'), tool: explicit('--tool'), args: parseToolArgs(arg('--args')), now });
+      await emitFiles(vault, arg('--out'), [['event-tool-result.json', jsonText(result)]]);
+      json(result);
+    } else throw new Error('Usage: focus events tools | plugins | subscribe --vault PATH --state DIR --id ID --selector record|inbox|life [--record ID] --authorize events-subscribe | pause-subscription --vault PATH --state DIR --id ID --authorize events-subscribe | resume-subscription --vault PATH --state DIR --id ID --authorize events-subscribe | schedule --vault PATH --state DIR --id ID --subscription ID --every SECONDS --start ISO --authorize events-schedule | pause-schedule --vault PATH --state DIR --id ID --authorize events-schedule | resume-schedule --vault PATH --state DIR --id ID --authorize events-schedule | deliver --vault PATH --state DIR --authorize events-deliver [--now ISO] | redeliver --vault PATH --state DIR --delivery ID --authorize events-deliver [--now ISO] | status --vault PATH --state DIR | call --tool NAME --vault PATH [--state DIR] [--args JSON] [--authorize GRANT] [--now ISO]');
+  } else if (command === 'schemas') json({ manifest: manifestSchema, record: recordSchema, captureRequest: captureRequestSchema, changeSet: changeSetSchema, processingReceipt: processingReceiptSchema, queryIndex: queryIndexSchema, backupManifest: backupManifestSchema, placeList: placeListSchema, placeCandidateCatalog: placeCandidateCatalogSchema, placeMatch: placeMatchSchema, collectionMap: collectionMapSchema, fragmentPack: fragmentPackSchema, referencePack: referencePackSchema, eventSubscription: eventSubscriptionSchema, eventSchedule: eventScheduleSchema, eventDelivery: eventDeliverySchema, eventState: eventStateSchema, eventMonitor: eventMonitorSchema, eventToolCatalog: eventToolCatalogSchema, pluginCatalog: pluginCatalogSchema, eventDeliveryRun: eventDeliveryRunSchema });
+  else throw new Error('Usage: focus doctor | validate --vault PATH | plan --request FILE --vault PATH [--out .codex-work/tmp/NAME] | capture --request FILE --vault PATH --authorize capture [--content DIR] [--out .codex-work/tmp/NAME] | confirm-finance --request FILE --vault PATH --authorize finance-confirm | confirm-place --vault PATH --place ID --candidate ID --authorize place-confirm [--candidates FILE] [--query TEXT] [--out .codex-work/tmp/NAME] | places --vault PATH [--out .codex-work/tmp/NAME] | match-place --vault PATH --place ID [--query TEXT] [--candidates FILE] [--out .codex-work/tmp/NAME] | map --vault PATH [--out .codex-work/tmp/NAME] | fragments --vault PATH [--pack FILE] [--out .codex-work/tmp/NAME] | inbox --vault PATH [--status STATUS] [--out .codex-work/tmp/NAME] | search --vault PATH [--query TEXT] [--tag TAG] [--out .codex-work/tmp/NAME] | life --vault PATH [--kind task|plan|wishlist] [--status STATUS] [--out .codex-work/tmp/NAME] | index --vault PATH [--out .codex-work/tmp/NAME] [--check FILE] | accept --vault PATH [--out .codex-work/tmp/NAME] | backup --vault PATH --out DIR | restore --backup DIR --vault PATH | events tools | events plugins | events subscribe | events schedule | events deliver | events status | events call | schemas');
 } catch (e) { json({ error: e instanceof Error ? e.message : 'Unknown error' }); process.exitCode = 1; }

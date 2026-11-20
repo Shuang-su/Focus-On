@@ -23,6 +23,8 @@ bash scripts/bootstrap.sh focus plan --request examples/requests/create-task.jso
 
 `inbox`、`search`、`life`、`index`、`accept`、`backup`、`restore` 同样只接受命令行 `--vault` 或显式备份路径，不读取 `FOCUS_VAULT_PATH`。`accept` 以该目录里的文件为正式记录，在内存里重建查询索引。公开验证运行 `bash scripts/bootstrap.sh focus accept --vault examples/vault`。私人样本只在调用方本机的 `--vault` 上验收，不进入公开仓库或 CI 日志里的业务正文。`backup` / `restore` 只读写本地 git 目录和本地 bundle，不添加远端，也不推送。备份若含私人内容，应放在仓库外或 `.codex-work/tmp`，并且不要提交。
 
+`events tools`、`events plugins`、`events subscribe`、`events schedule`、`events deliver`、`events redeliver`、`events status` 和 `events call` 也只接受命令行 `--vault`，不读取 `FOCUS_VAULT_PATH`。`--state` 是本地日志目录，必须位于来源资料库之外，并且位于仓库外或 `.codex-work/tmp`。订阅、调度和投递不会推送远端，不会调用网络地理编码，也不会发送外部消息。公开验证对合成 `examples/vault` 做只读观察；写入测试使用该目录的临时副本和临时 `--state`。事件日志不进入 vault bundle。
+
 GitHub Actions 的 Linux 验证与 Codex/Dots 实测分别记录。后者需要真实任务链接与取回内容；授权或云入口尚未就绪时标待验收。
 
-旧 Codex Cloud 可使用 setup/maintenance scripts、固定 Node 版本和网络设置；Work/Dots 按实际账户入口测试。官方资料：[Cloud](https://learn.chatgpt.com/docs/environments/cloud-environment)、[Dots tasks](https://learn.chatgpt.com/docs/dots/tasks-and-memory)、[MCP Events](https://developers.openai.com/plugins/build/mcp-events)。固定周期需要已保存调度；Events 需要持久订阅服务。本轮没有常驻服务器或自动监控。
+旧 Codex Cloud 可使用 setup/maintenance scripts、固定 Node 版本和网络设置；Work/Dots 按实际账户入口测试。官方资料：[Cloud](https://learn.chatgpt.com/docs/environments/cloud-environment)、[Dots tasks](https://learn.chatgpt.com/docs/dots/tasks-and-memory)、[MCP Events](https://developers.openai.com/plugins/build/mcp-events)。固定周期在本仓库里是已保存的本地调度，只有显式 `events deliver` 才会计算到期点。受限工具目录不是已监听的 MCP 服务。本轮没有常驻服务器、用户级守护进程、外部消息或已启用的 Dots 订阅。CI 成功不能代替这些实测。

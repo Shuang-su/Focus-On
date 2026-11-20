@@ -2,7 +2,7 @@
 
 收集值得关注的信息，安排想做的事情，记录实际发生的生活。
 
-本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具、本地授权写入闭环、日常查询，以及从本地资料派生的地点匹配、收藏地图和设计参考包。尚未提供应用界面、在线地理编码、私有远端写入或后台自动采集。
+本公开仓库保存产品代码、格式规范和合成测试资料。个人收藏、生活和财务记录保存在独立私有 `focus-on-vault`。当前交付是基础工具、本地授权写入闭环、日常查询、从本地资料派生的地点匹配、收藏地图和设计参考包，以及一份不常驻的本地事件日志。尚未提供应用界面、在线地理编码、私有远端写入、外部消息或已启用的 MCP/Dots 订阅。
 
 ## 开始使用
 
@@ -62,7 +62,22 @@ bash scripts/bootstrap.sh focus confirm-place --vault "$VAULT" --place place_sam
 
 `map` 只给已经有坐标的地点生成点。没有坐标的地点和尚未连到这些地点的收藏进入 unplaced，不会被填上假坐标。GeoJSON 使用 `[longitude, latitude]`，并保留记录里的 WGS84 或 GCJ02，不做基准面换算。`fragments` 不带 `--pack` 时，只收集带有标签 `design` 的收藏；`--pack` 再按合成或调用方提供的片段包提取关联 Markdown。标签区分大小写。`--out` 必须位于来源资料库之外。
 
-公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引、备份清单、地点列表、地点匹配、收藏地图和参考包是从这些记录派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。
+事件是另一份本地日志，不是资料库记录。`--vault` 和 `--state` 都必须出现在命令行上，这些命令不读取 `FOCUS_VAULT_PATH`。`--state` 要放在来源资料库之外，并且放在本仓库之外或 `.codex-work/tmp`。订阅、调度和投递不会把待办改成完成，也不会把财务草稿改成 confirmed。`events tools` 只描述进程内工具，`server` 为 disabled；`events plugins` 里的地图和 UI 界面保持 disabled。没有守护进程，也没有外部消息。
+
+```bash
+bash scripts/bootstrap.sh focus events tools
+bash scripts/bootstrap.sh focus events plugins
+bash scripts/bootstrap.sh focus events subscribe --vault examples/vault --state .codex-work/tmp/events --id sub_task --selector record --record task_sample --authorize events-subscribe
+bash scripts/bootstrap.sh focus events schedule --vault examples/vault --state .codex-work/tmp/events --id sched_hour --subscription sub_task --every 3600 --start 2026-11-18T00:00:00Z --authorize events-schedule
+bash scripts/bootstrap.sh focus events deliver --vault examples/vault --state .codex-work/tmp/events --authorize events-deliver --now 2026-11-18T00:00:00Z
+bash scripts/bootstrap.sh focus events status --vault examples/vault --state .codex-work/tmp/events
+```
+
+同一 `--state` 上的订阅、调度和投递会排队。投递在处理函数返回并写完日志之前一直占着锁，后到的命令不会用旧快照覆盖新记录。
+
+`subscribe` 没有 `--authorize events-subscribe` 时拒绝写入。`schedule` 需要 `--authorize events-schedule`，`deliver` 和 `redeliver` 需要 `--authorize events-deliver`。这三个授权不能代替 `capture` 或 `place-confirm`。同一观察键或同一调度发生时间只保留一条投递；再次执行会标成 duplicate，不会另写一条。失败后按 60 秒起、每次翻倍、最长 3600 秒的间隔重试，最多 5 次。耗尽后状态留在日志里，自动投递不再调用处理函数；只有再次授权的 `redeliver` 才会重新尝试。一次调度补跑最多 8 个到期点。日志最多 50 个订阅、50 个调度和 100 条投递。事件日志不在 `backup` 里，恢复资料库不会带回 `--state`。
+
+公共接口：`CaptureRequest`、`ChangeSet`、`ProcessingReceipt`、`RecordData`。查询索引、备份清单、地点列表、地点匹配、收藏地图、参考包、事件状态和插件目录是从这些记录或本地日志派生的 schemaVersion 1 文档。执行 `focus schemas` 导出 JSON Schema。
 
 公开示例 manifest 的全零 validator SHA 是合成测试标记；正式私有资料库固定实际本体 commit，升级需单独验证。剪藏摘要与笔记可保存在按记录 ID 关联的 Markdown 中。
 
